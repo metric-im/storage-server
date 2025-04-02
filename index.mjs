@@ -16,7 +16,8 @@ export default class StorageServer extends Componentry.Module {
 
     static async mint(connector) {
         let instance = new StorageServer(connector);
-        instance.storage = await StorageBridge.mint(instance);
+        //TODO: this is suppressed as not yet implemented properly
+//        instance.storage = await StorageBridge.mint(instance);
         return instance;
     }
 

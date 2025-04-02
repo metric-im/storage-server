@@ -1,2 +1,4 @@
 # storage-server
-Backend file management
+Backend file management for metric componentry
+
+WIP

@@ -3,9 +3,20 @@
 Storage Server plugs into the metric componentry providing file management. It exports a web api on the front-end
 normalizing get/put/delete across numerous file systems. It is nothing new or complicated.
 
-```plantuml
-Storage <- Web API
-```
+~~~~plantuml
+@startuml
+[event source]
+[event analyzer]
+package "metric server" {
+  [pull] --> [ontology]
+  [pull] <-- [event analyzer]
+  [ping] --> [ontology]
+  [ping] --> [refinery]
+  [ping] <-right- [event source]
+
+}
+@enduml
+~~~~
 
 ## Configuration
 When instantiated, the storage server will connect to the requested backend service with credentials provided by
@@ -16,13 +27,13 @@ the host. We use environment variables
 
 ## API Reference
 
-### GET /storage/{account}[/{path}[...]]/{fileName}][#render][?options]
+### GET /storage/{account}[/{path}[/...]]/{fileName}][#render][?options]
 
-| Attribute | Description                                                                                      |
-|-----------|--------------------------------------------------------------------------------------------------|
-| account   | Top level organizational bucket                                                                  |
-| path      | arbitrary nested folders                                                                         |
-| fileName | uniquely named blob of any file type                                                             |
+| Attribute | Description                                                                                    |
+|-----------|------------------------------------------------------------------------------------------------|
+| account   | Top level organizational bucket                                                                |
+| path      | arbitrary nested folders                                                                       |
+| fileName | uniquely named blob of any file type                                                            |
 | #render | indicates a rendering engine for special file handling. If not provided the raw file is returned |
 | options | Options to be determined can be provided through the query string of the url request.            |
 
@@ -37,14 +48,17 @@ however, may deliver the file with a player. For example, a video file might be 
 this renders a video object on a web page and could be placed in an iframe. Or, a json file may be delivered
 as a spread sheet download with '#csv.file'
 
-### POST /storage/{account}[/{path}[...]]/{fileName}]
+### POST /storage/{account}[/{path}[/...]]/{fileName}][#render][?options]
 
 Upload a file to the given account and folder path. Additional form fields containing atomic strings or numbers
-will be saved in the `._i` meta file. If the file already exists, it will replaced with new upload. Properties
+will be saved in the `._i` meta file. If the file already exists, it will be replaced with the new upload. Properties
 accompanying the new file will be merged with the existing properties. New values replace old values. Properties
-not provided with the new upload will be retained.
+not provided with the new upload will be retained. Properties may be updated by posting without a file attachment.
 
-### DELETE /storage/{account}[/{path}[...]]/{fileName}]
+A render engine may be used on uploaded files. For example, `#networkImage` may automatically normalize all
+image type files to png.
+
+### DELETE /storage/{account}[/{path}[/...]]/{fileName}]
 
 Deletes the referenced file from storage, or files if only a path is provided. A file means ALL files that have the
 same root name as the file being deleted. So deleting `mycat.png` will further delete `mycat.png._i` and
@@ -55,13 +69,15 @@ same root name as the file being deleted. So deleting `mycat.png` will further d
 * **Wildcards** - All requests support wildcards. For example `/2025/taxes_*` will return all files in a folder named 2025
 that begin with `taxes_`. Wildcard search are implemented with regex. Complex regex phrases will need to be
 URLEncoded.
-* **case** - The system should store and present the original case of a filename, however, matching is done case-insensitive.
+* **Case** - The system should store and present the original case of a filename, however, matching is done case-insensitive.
 A file stored on disk, for example, may be named MyCat.jpg. It will be rendered in lists as such. However, no other file
-in the same folder my have the sequence of letters, mycat.jpg.
+in the same folder may have the sequence of letters, "mycat.jpg".
+* **Security** - Access Control pertains solely to the top-level account bucket. The current user must have read,
+write, owner access for GET, POST, DELETE respectively.
 
 ### Meta Data
-Every file whould have an accompanying meta data file which is the file name accompanied by "._i" (I for info
-because some obnoxious company stole "meta" from the English language. The
+Every file has an accompanying meta data file which is the file name accompanied by "._i" (I for info
+because some obnoxious company stole "meta" from the English language.) The
 meta data file includes _created, _createdBy, _modified and many optional properties such as tags, dimensions, hash
 code or description. In most rendering scenarios, no one would never see the _i file. 
 
@@ -75,7 +91,15 @@ code or description. In most rendering scenarios, no one would never see the _i 
 /AcmeCorp/creative/archive/red_truck.png
 /AcmeCorp/creative/archive/red_truck.png._i
 ```
-`/storage/acmeCorp/`
+On upload of new file, set:
+* _created = now
+* _createdBy = account.userId
+* _hash = md5 hash of file bytes
+
+On upload of existing file
+* _modified = now
+* _modifiedBy = account.userId
+* _hash = md5 hash of file bytes
 
 >**NOTE:** The choice to put the meta data into a sister file rather than attaching it to the content file or storing the
 > data in a database is deliberate. It helps with portability without touching the original. There are benefits to other
