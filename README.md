@@ -1,4 +1,4 @@
 # storage-server
-Backend file management for metric componentry
+Backend file management
 
-WIP
+[Architecture](/doclets/MetricStorageServer.md)
