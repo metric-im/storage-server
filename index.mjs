@@ -7,7 +7,12 @@ import Componentry from '@metric-im/componentry';
 import axios from 'axios'
 import sharp from 'sharp';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
 import StorageBridge from './modules/StorageBridge/index.mjs';
+import listRoutes  from './routes/listRoutes.mjs';
+import itemRoutes  from './routes/itemRoutes.mjs';
+
+dotenv.config();
 
 export default class StorageServer extends Componentry.Module {
     constructor(connector) {
@@ -15,25 +20,30 @@ export default class StorageServer extends Componentry.Module {
     }
 
     static async mint(connector) {
-        let instance = new StorageServer(connector);
-        //TODO: this is suppressed as not yet implemented properly
-//        instance.storage = await StorageBridge.mint(instance);
-        return instance;
+        const server = new StorageServer(connector);
+        /*
+            environment variables for storj example:
+
+            STORAGE_PROFILE=storj
+            STORAGE_CREDENTIALS='{"STORJ":{
+                "BUCKET":"metric-storage",
+                "ACCESS_KEY":"",
+                "SECRET":""
+            }}'
+        */
+        try { connector.profile = JSON.parse(process.env.STORAGE_CREDENTIALS); }
+        catch  { connector.profile = process.env.STORAGE_CREDENTIALS; }
+        process.env.MEDIA_STORAGE = process.env.STORAGE_PROFILE;
+        server.storage = await StorageBridge.mint(server);
+        return server;
     }
 
     routes() {
-        let router = express.Router();
+        const router = express.Router();
+        router.use(express.json());
         router.use(fileUpload({ limits: {fileSize: 50 * 1024 * 1024}}));
-        router.get('/storage/list/:account/:path',async (req,res) => {
-            try {
-                let list = await this.storage.list()
-                res.json();
-            } catch(e) {
-                console.error(e);
-                res.send(e.message);
-            }
-        })
-
+        router.use('/storage/list', listRoutes(this.storage, this.connector));
+        router.use('/storage/item', itemRoutes(this.storage, this.connector));
         return router;
     }
 
@@ -43,5 +53,3 @@ export default class StorageServer extends Componentry.Module {
         res.end(this.pixel,'binary');
     }
 }
-
-
