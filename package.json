@@ -1,6 +1,7 @@
 {
   "name": "@metric-im/storage-server",
   "version": "1.0.0",
+  "type": "module",
   "description": "File management for metric componentry",
   "main": "index.mjs",
   "scripts": {
@@ -17,8 +18,10 @@
   },
   "homepage": "https://github.com/metric-im/storage-server#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.815.0",
     "@metric-im/componentry": "^1.4.2",
-    "axios": "^1.8.4",
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-fileupload": "^1.5.1",
     "sharp": "^0.33.5"
