@@ -8,7 +8,9 @@ export default function listRoutes(storage, connector) {
         const acct = req.params.account;
         if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
 
-        const rawPath = req.params.path || '';
+        const rawPath = req.params.path ? 
+            (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : 
+            '';
         const parts = rawPath ? rawPath.split('/') : [];
         let wildcard = null;
 
@@ -27,11 +29,11 @@ export default function listRoutes(storage, connector) {
 
         const out = {};
         for (const key in items) {
-            const name = key.split('/').pop();
-            if (wildcard.test(name)) out[key] = items[key];
+            const relative = key.startsWith(prefix + '/') ? key.slice(prefix.length + 1) : key;
+            if (wildcard.test(relative)) out[key] = items[key];
         }
         return res.json(out);
-    };
+    };  
     router.get('/:account', listHandler);
     router.get('/:account/*path', listHandler);
 
@@ -39,7 +41,9 @@ export default function listRoutes(storage, connector) {
         const acct = req.params.account;
         if (!checkAcl(connector, acct, 'write')) return res.sendStatus(403);
 
-        const rawPath = req.params.path || '';
+        const rawPath = req.params.path ? 
+            (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : 
+            '';
         const prefix = [acct, ...rawPath.split('/')].filter(Boolean).join('/');
 
         const exist = await storage.list(prefix);
@@ -56,7 +60,9 @@ export default function listRoutes(storage, connector) {
     const deleteHandler = async (req, res) => {
         const acct = req.params.account;
         if (!checkAcl(connector, acct, 'owner')) return res.sendStatus(403);
-        const rawPath = req.params.path || '';
+        const rawPath = req.params.path ? 
+            (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : 
+            '';
         const prefix = [acct, ...rawPath.split('/')].filter(Boolean).join('/');
         const ok = await storage.remove(prefix);
         return ok ? res.sendStatus(204) : res.sendStatus(404);
