@@ -29,11 +29,11 @@ export default function listRoutes(storage, connector) {
 
         const out = {};
         for (const key in items) {
-            const relative = key.startsWith(prefix + '/') ? key.slice(prefix.length + 1) : key;
-            if (wildcard.test(relative)) out[key] = items[key];
+            const name = key.split('/').pop();
+            if (wildcard.test(name)) out[key] = items[key];
         }
         return res.json(out);
-    };  
+    };
     router.get('/:account', listHandler);
     router.get('/:account/*path', listHandler);
 

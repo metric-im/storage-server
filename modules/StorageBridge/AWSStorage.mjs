@@ -35,18 +35,15 @@ export default class AWSStorage extends Index {
     let response = await this.client.send(test);
     let items = {};
     for (let record of response.Contents || []) {
-        const m = record.Key.match(/^(.*)\.([a-z0-9_]+)$/i); // keeps full key + ext
+        const m = record.Key.match(/(.*\/[a-zA-Z0-9]+)\.(.*)/); // only destructure if the key is a valid path (skip folder markers)
         if (!m) continue;
-
-        const [ , baseKey, ext ] = m; // baseKey = 'account/newfolder/newfile', ext = 'png'
-        const fullKey = `${baseKey}.${ext}`;
-
-        if (!items[fullKey]) items[fullKey] = { _id: fullKey, variants: {} };
-        items[fullKey].variants[ext] = { type: ext, spec: ext };
-
-        if (ext === 'json') {
-            const props = await this.getJSON(baseKey);
-            Object.assign(items[fullKey], props);
+        let [key,_id, qualifier] = m
+        let [type,spec] = qualifier.split('.').reverse();
+        if (!items[_id]) items[_id] = {_id:_id,variants:{}}
+        items[_id].variants[spec] = {type:type,spec:spec};
+        if (type === 'json') {
+            let properties = await this.getJSON(_id)
+            Object.assign(items[_id],properties);
         }
     }
     return items;
