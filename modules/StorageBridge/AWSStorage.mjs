@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import Index from './index.mjs';
 import ImageProcessor from "./ImageProcessor.mjs";
-import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
+import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 export default class AWSStorage extends Index {
 
@@ -34,19 +34,21 @@ export default class AWSStorage extends Index {
     })
     let response = await this.client.send(test);
     let items = {};
-    for (let record of response.Contents||[]) {
-      let [key,_id,qualifier] = record.Key.match(/(.*\/[a-zA-Z0-9]+)\.(.*)/)||[];
-      let [type,spec] = qualifier.split('.').reverse();
-      if (!items[_id]) items[_id] = {_id:_id,variants:{}}
-      items[_id].variants[spec] = {type:type,spec:spec};
-      if (type === 'json') {
-        let properties = await this.getJSON(_id)
-        Object.assign(items[_id],properties);
-      }
+    for (let record of response.Contents || []) {
+        const m = record.Key.match(/(.*\/[a-zA-Z0-9]+)\.(.*)/); // only destructure if the key is a valid path (skip folder markers)
+        if (!m) continue;
+        let [key,_id, qualifier] = m
+        let [type,spec] = qualifier.split('.').reverse();
+        if (!items[_id]) items[_id] = {_id:_id,variants:{}}
+        items[_id].variants[spec] = {type:type,spec:spec};
+        if (type === 'json') {
+            let properties = await this.getJSON(_id)
+            Object.assign(items[_id],properties);
+        }
     }
     return items;
   }
-
+  
   async get(keyName) {
     let response = await this.sendS3Request(new GetObjectCommand({Bucket: this.bucketName, Key: keyName}));
     if (response.$metadata.httpStatusCode === 200) return await this.streamToBuffer(response.Body);
@@ -73,6 +75,30 @@ export default class AWSStorage extends Index {
       }
     } catch(e) {}
     return {};
+  }
+  
+  async putMeta(keyName, data) {
+    const body = JSON.stringify(data);
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: `${keyName}._i`,
+      ContentType: 'application/json',
+      Body: body
+    }));
+  }
+
+  async getMeta(keyName) {
+    try {
+      let resp = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: `${keyName}._i`
+      }));
+      if (resp.$metadata.httpStatusCode === 200) {
+        const buf = await this.streamToBuffer(resp.Body);
+        return JSON.parse(buf.toString());
+      }
+    } catch (e) {}
+    return null;
   }
 
   async getImage(id, options) {
@@ -116,7 +142,7 @@ export default class AWSStorage extends Index {
     }));
     if (variants.Contents) {
       // don't delete the properties file
-      let files = variants.Contents.filter((file)=>{!file.Key.endsWith('.json')});
+      let files = variants.Contents.filter((file)=>!file.Key.endsWith('.json'));
       if (files.length > 0) {
         await this.client.send(new DeleteObjectsCommand({
           Bucket: this.bucketName,
@@ -171,20 +197,29 @@ export default class AWSStorage extends Index {
   async remove(ids,path) {
     if (!ids) return false;
     if (typeof ids === 'string') ids = ids.split(',');
-    let files = [];
+
+    let foundAny = false;
+
     for (let id of ids) {
-      let listCommand = new ListObjectsCommand({
+      const prefix = path ? `${path}/${id}` : id;
+
+      // list everything under prefix including "folder/" marker
+      const listCommand = new ListObjectsCommand({
         Bucket: this.bucketName,
-        Prefix:`${path?path+'/':''}${id}`
+        Prefix: prefix,
       });
-      let response = await this.client.send(listCommand);
-      files = files.concat(response.Contents);
+      const response = await this.client.send(listCommand);
+
+      // delete each object individually
+      for (let obj of response.Contents || []) {
+        await this.client.send(new DeleteObjectCommand({
+          Bucket: this.bucketName,
+          Key: obj.Key
+        }));
+        foundAny = true;
+      }
     }
 
-    let deleteCommand = new DeleteObjectsCommand({Bucket: this.bucketName, Delete: {
-      Objects: files,
-    }});
-    let response = await this.client.send(deleteCommand);
-    return response.$metadata.httpStatusCode === 200;
+    return foundAny;
   }
 }
