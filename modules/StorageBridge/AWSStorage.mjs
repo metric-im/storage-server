@@ -1,7 +1,17 @@
 import sharp from 'sharp';
+import path from 'path';
 import Index from './index.mjs';
-import ImageProcessor from "./ImageProcessor.mjs";
-import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
+import { Md5 } from '@aws-sdk/md5-js'; // Added Md5 import for content MD5
+import MediaPresetsRaw from '../MediaPresets.mjs';
+
+const MediaPresets = Object.fromEntries(
+  Object.entries(MediaPresetsRaw).map(([key, { _id, options }]) => {
+    const [, coords] = options.split('=');
+    const [width, height, fit] = coords.split(',');
+    return [_id, { id: _id, width: +width, height: +height, fit }];
+  })
+);
 
 export default class AWSStorage extends Index {
 
@@ -28,38 +38,73 @@ export default class AWSStorage extends Index {
   }
 
   async list(prefix) {
-    let test = new ListObjectsCommand({
+    let listCommand = new ListObjectsCommand({
       Bucket: this.bucketName,
       Prefix:prefix
     })
-    let response = await this.client.send(test);
+    let response = await this.client.send(listCommand);
     let items = {};
     for (let record of response.Contents || []) {
-        const m = record.Key.match(/(.*\/[a-zA-Z0-9]+)\.(.*)/); // only destructure if the key is a valid path (skip folder markers)
-        if (!m) continue;
-        let [key,_id, qualifier] = m
-        let [type,spec] = qualifier.split('.').reverse();
-        if (!items[_id]) items[_id] = {_id:_id,variants:{}}
-        items[_id].variants[spec] = {type:type,spec:spec};
-        if (type === 'json') {
-            let properties = await this.getJSON(_id)
-            Object.assign(items[_id],properties);
+      const key = record.Key;
+      // If it's an S3-style directory marker ("myfolder/")
+      if (key.endsWith('/') && record.Size === 0) {
+        const keyBase = key.slice(0, -1);
+        if (!items[keyBase]) {
+          items[keyBase] = { _id: keyBase, variants: {} };
         }
+        items[keyBase].variants[''] = {
+          type: 'application/x-directory',
+          spec: ''
+        };
+        continue;
+      }
+
+      const keyBaseForMeta = key.substring(0, key.lastIndexOf('.'));
+      const customMeta = await this.getMeta(keyBaseForMeta);
+
+      if (!items[keyBaseForMeta]) {
+        items[keyBaseForMeta] = { _id: keyBaseForMeta, variants: {} };
+      }
+
+      Object.assign(items[keyBaseForMeta], {
+        size: record.Size,
+        lastModified: record.LastModified.toISOString(),
+        type: customMeta?.type || record.ContentType,
+        variants: {
+          '': {
+            type: customMeta?.type || record.ContentType || 'application/octet-stream',
+            spec: ''
+          }
+        },
+        ...customMeta
+      });
+
+      const m = key.match(/(.*\/[A-Za-z0-9_-]+)\.(.+)$/);
+      if (m) {
+        const [, baseFromMatch, qualifier] = m;
+        const [parsedType, parsedSpec] = qualifier.split('.').reverse();
+        if (qualifier !== record.Key.substring(record.Key.lastIndexOf('.') + 1)) {
+            items[keyBaseForMeta].variants[parsedSpec] = { type: parsedType, spec: parsedSpec };
+        }
+      }
     }
     return items;
   }
-  
   async get(keyName) {
     let response = await this.sendS3Request(new GetObjectCommand({Bucket: this.bucketName, Key: keyName}));
     if (response.$metadata.httpStatusCode === 200) return await this.streamToBuffer(response.Body);
     else return null;
   }
   async put(keyName,buffer,type) {
+    const hasher = new Md5();
+    hasher.update(buffer);
+    const contentMD5 = Buffer.from(await hasher.digest()).toString('base64');
     let response = await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: keyName,
       ContentType: type,
-      Body: buffer
+      Body: buffer,
+      ContentMD5: contentMD5
     }))
     if (response.$metadata.httpStatusCode === 200) return buffer;
     else return null;
@@ -94,39 +139,43 @@ export default class AWSStorage extends Index {
         Key: `${keyName}._i`
       }));
       if (resp.$metadata.httpStatusCode === 200) {
-        const buf = await this.streamToBuffer(resp.Body);
-        return JSON.parse(buf.toString());
+        const buffer = await this.streamToBuffer(resp.Body);
+        return JSON.parse(buffer.toString());
       }
     } catch (e) {}
     return null;
   }
 
-  async getImage(id, options) {
-    let spec = new ImageProcessor(id, options);
-    let test = new GetObjectCommand({Bucket: this.bucketName, Key: spec.path})
-    let response = await this.sendS3Request(test);
+  async getImage(keyBase, preset) {
+    const variantKey = `${keyBase}.${preset.id}`;
+    // 1) Try cache
+    const cached = await this.get(variantKey);
+    if (cached) return cached;
 
-    if (response.$metadata.httpStatusCode !== 200) {
-      let spec = await ImageProcessor.fromSpec(id,options,this)
-      let mainSpec = new ImageProcessor(spec.id);
-      let mainTest = new GetObjectCommand({Bucket: this.bucketName, Key: mainSpec.path})
-      response = await this.sendS3Request(mainTest);
-      if (response.$metadata.httpStatusCode === 200) {
-        spec.properties = await this.getJSON(spec.id);
-        let buffer = await this.streamToBuffer(response.Body)
-        buffer = await sharp(buffer,{failOnError: false});
-        spec.buffer = await spec.process(buffer);
-        await spec.save(this);
-        buffer = await spec.buffer.toBuffer();
-        return buffer;
-      } else return null
+    // 2) Load original
+    let originalKey = keyBase;
+    if (!path.extname(originalKey)) {
+      const meta = await this.getMeta(keyBase) || {};
+      if (!meta._ext) return null;
+      originalKey = `${keyBase}.${meta._ext}`;
     }
-    return response.Body;
+    const originalBuffer = await this.get(originalKey);
+    if (!originalBuffer) return null;
+
+    // 3) Transform via Sharp
+    let image = sharp(originalBuffer, { failOnError: false })
+      .resize(preset.width, preset.height, { fit: preset.fit });
+    image = image.png();
+    const outputBuffer = await image.toBuffer();
+
+    // 4) Cache & return
+    await this.put(variantKey, outputBuffer, 'image/png');
+    return outputBuffer;
   }
 
   async putJSON(id, data) {
     let json = (typeof data === 'object')?JSON.stringify(data):data;
-    let response = await this.client.send(new PutObjectCommand({
+    await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: id+'.json', // for image === spec.path
       ContentType: 'application/json',
@@ -142,24 +191,28 @@ export default class AWSStorage extends Index {
     }));
     if (variants.Contents) {
       // don't delete the properties file
-      let files = variants.Contents.filter((file)=>!file.Key.endsWith('.json'));
+      let files = variants.Contents.filter((file)=>!file.Key.endsWith('.json') && file.Key !== file);
       if (files.length > 0) {
         await this.client.send(new DeleteObjectsCommand({
           Bucket: this.bucketName,
-          Delete: {Objects: files}
+          Delete: {Objects: files.map(f => ({ Key: f.Key }))}
         }));
       }
     }
+    const hasher = new Md5();
+    hasher.update(buffer);
+    const contentMD5 = Buffer.from(await hasher.digest()).toString('base64');
     // Post the new object
     let response = await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: file, // for image === spec.path
       ContentType: fileType,
-      Body: buffer
+      Body: buffer,
+      ContentMD5: contentMD5
     }))
     if (response.$metadata.httpStatusCode === 200) {
       return buffer;
-    }
+    } else return null;
   }
 
   async sendS3Request(option) {
@@ -184,24 +237,24 @@ export default class AWSStorage extends Index {
     image = await this.streamToBuffer(image)
     const buffer = await sharp(image).rotate(rotateDegree).toBuffer()
 
-    const spec = new ImageProcessor(id)
     const fileType = 'image/png';
 
     const isDeleted = await this.remove(id)
     if (!isDeleted) return false
-    const url = await this.putImage(id, spec.path, fileType, buffer)
+
+    const url = await this.putImage(id, `${id}.png`, fileType, buffer)
 
     return Boolean(url)
   }
 
-  async remove(ids,path) {
+  async remove(ids, pathPrefix) {
     if (!ids) return false;
     if (typeof ids === 'string') ids = ids.split(',');
 
     let foundAny = false;
 
     for (let id of ids) {
-      const prefix = path ? `${path}/${id}` : id;
+      const prefix = pathPrefix ? `${pathPrefix}/${id}` : id;
 
       // list everything under prefix including "folder/" marker
       const listCommand = new ListObjectsCommand({

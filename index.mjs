@@ -31,8 +31,15 @@ export default class StorageServer extends Componentry.Module {
                 "SECRET":""
             }}'
         */
-        try { connector.profile = JSON.parse(process.env.STORAGE_CREDENTIALS); }
-        catch  { connector.profile = process.env.STORAGE_CREDENTIALS; }
+        if (!process.env.STORAGE_CREDENTIALS) {
+            throw new Error("STORAGE_CREDENTIALS is required but not found in environment");
+        }
+        try {
+            const storageCredentials = JSON.parse(process.env.STORAGE_CREDENTIALS);
+            connector.profile = { ...connector.profile, ...storageCredentials };
+        } catch (e) {
+            throw e;
+        }
         process.env.MEDIA_STORAGE = process.env.STORAGE_PROFILE;
         server.storage = await StorageBridge.mint(server);
         return server;
@@ -40,10 +47,17 @@ export default class StorageServer extends Componentry.Module {
 
     routes() {
         const router = express.Router();
-        router.use(express.json());
-        router.use(fileUpload({ limits: {fileSize: 50 * 1024 * 1024}}));
-        router.use('/storage/list', listRoutes(this.storage, this.connector));
-        router.use('/storage/item', itemRoutes(this.storage, this.connector));
+
+        router.use(
+            '/list',
+            express.json(),
+            listRoutes(this.storage, this.connector)
+        );
+
+        router.use(
+            '/item',
+            itemRoutes(this.storage, this.connector)
+        );
         return router;
     }
 
