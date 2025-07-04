@@ -21,19 +21,6 @@ export default class StorageServer extends Componentry.Module {
 
     static async mint(connector) {
         const server = new StorageServer(connector);
-        /*
-            environment variables for storj example:
-
-            STORAGE_PROFILE=storj
-            STORAGE_CREDENTIALS='{"STORJ":{
-                "BUCKET":"metric-storage",
-                "ACCESS_KEY":"",
-                "SECRET":""
-            }}'
-        */
-        try { connector.profile = JSON.parse(process.env.STORAGE_CREDENTIALS); }
-        catch  { connector.profile = process.env.STORAGE_CREDENTIALS; }
-        process.env.MEDIA_STORAGE = process.env.STORAGE_PROFILE;
         server.storage = await StorageBridge.mint(server);
         return server;
     }
@@ -44,6 +31,7 @@ export default class StorageServer extends Componentry.Module {
         router.use(fileUpload({ limits: {fileSize: 50 * 1024 * 1024}}));
         router.use('/storage/list', listRoutes(this.storage, this.connector));
         router.use('/storage/item', itemRoutes(this.storage, this.connector));
+        // router.use(this.notFound.bind(this));
         return router;
     }
 
