@@ -1,8 +1,8 @@
 import sharp from 'sharp';
 import path from 'path';
-import Index from './index.mjs';
+import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
-import { Md5 } from '@aws-sdk/md5-js'; // Added Md5 import for content MD5
+import { Md5 } from '@aws-sdk/md5-js';
 import MediaPresetsRaw from '../MediaPresets.mjs';
 
 const MediaPresets = Object.fromEntries(
@@ -13,7 +13,7 @@ const MediaPresets = Object.fromEntries(
   })
 );
 
-export default class AWSStorage extends Index {
+export default class AWSStorage extends StorageBridge {
 
   constructor(parent, options = {}) {
     super(parent, options);
@@ -21,8 +21,8 @@ export default class AWSStorage extends Index {
     this.initClient();
   }
   initClient() {
-    this.bucketName = this.connector.profile.aws.s3_bucket
-    this.client = new S3Client({region:this.connector.profile.aws.s3_region});
+    this.bucketName = this.connector.profile.AWS.S3_BUCKET
+    this.client = new S3Client({region:this.connector.profile.AWS.S3_REGION});
   }
 
   static async mint(parent, options) {
