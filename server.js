@@ -7,7 +7,6 @@ async function main() {
 
     const app = express();
     app.use(storageModule.routes());
-    app.use(storageModule.notFound.bind(storageModule));
 
     const port = process.env.PORT || 3000;
     app.listen(port, () => {
