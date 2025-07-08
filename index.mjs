@@ -21,41 +21,20 @@ export default class StorageServer extends Componentry.Module {
 
     static async mint(connector) {
         const server = new StorageServer(connector);
-        /*
-            environment variables for storj example:
-
-            STORAGE_PROFILE=storj
-            STORAGE_CREDENTIALS='{"STORJ":{
-                "BUCKET":"metric-storage",
-                "ACCESS_KEY":"",
-                "SECRET":""
-            }}'
-        */
-        if (!process.env.STORAGE_CREDENTIALS) {
-            throw new Error("STORAGE_CREDENTIALS is required but not found in environment");
-        }
-        try {
-            const storageCredentials = JSON.parse(process.env.STORAGE_CREDENTIALS);
-            connector.profile = { ...connector.profile, ...storageCredentials };
-        } catch (e) {
-            throw e;
-        }
-        process.env.MEDIA_STORAGE = process.env.STORAGE_PROFILE;
         server.storage = await StorageBridge.mint(server);
         return server;
     }
 
     routes() {
         const router = express.Router();
-
         router.use(
-            '/list',
+            '/storage/list',
             express.json(),
             listRoutes(this.storage, this.connector)
         );
 
         router.use(
-            '/item',
+            '/storage/item',
             itemRoutes(this.storage, this.connector)
         );
         return router;
