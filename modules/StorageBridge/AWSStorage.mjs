@@ -14,7 +14,6 @@ const MediaPresets = Object.fromEntries(
 );
 
 export default class AWSStorage extends StorageBridge {
-
   constructor(parent, options = {}) {
     super(parent, options);
     this.connector = parent.connector;
