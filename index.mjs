@@ -27,7 +27,6 @@ export default class StorageServer extends Componentry.Module {
 
     routes() {
         const router = express.Router();
-<<<<<<< HEAD
         router.use(
             '/storage/list',
             express.json(),
@@ -38,13 +37,6 @@ export default class StorageServer extends Componentry.Module {
             '/storage/item',
             itemRoutes(this.storage, this.connector)
         );
-=======
-        router.use(express.json());
-        router.use(fileUpload({ limits: {fileSize: 50 * 1024 * 1024}}));
-        router.use('/storage/list', listRoutes(this.storage, this.connector));
-        router.use('/storage/item', itemRoutes(this.storage, this.connector));
-        // router.use(this.notFound.bind(this));
->>>>>>> 82a6554 (adjust profile data)
         return router;
     }
 
