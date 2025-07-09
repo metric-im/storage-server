@@ -38,54 +38,75 @@ export default class AWSStorage extends Index {
   }
 
   async list(prefix) {
+    const s3Prefix = prefix ? `${prefix}/` : '';
     let listCommand = new ListObjectsCommand({
       Bucket: this.bucketName,
-      Prefix:prefix
-    })
+      Prefix: s3Prefix,
+      Delimiter: '/'
+    });
+
     let response = await this.client.send(listCommand);
     let items = {};
-    for (let record of response.Contents || []) {
-      const key = record.Key;
-      // If it's an S3-style directory marker ("myfolder/")
-      if (key.endsWith('/') && record.Size === 0) {
-        const keyBase = key.slice(0, -1);
-        if (!items[keyBase]) {
-          items[keyBase] = { _id: keyBase, variants: {} };
-        }
-        items[keyBase].variants[''] = {
-          type: 'application/x-directory',
-          spec: ''
+
+    for (let commonPrefix of response.CommonPrefixes || []) {
+      const key = commonPrefix.Prefix; // e.g., "bluefire/folder1/"
+      const folderKeyBase = key.slice(0, -1); // e.g., "bluefire/folder1"
+
+      const relativePath = folderKeyBase.substring(s3Prefix.length);
+      const parts = relativePath.split('/');
+
+      if (parts.length === 1 && parts[0] !== '') {
+        items[folderKeyBase] = {
+          _id: folderKeyBase,
+          variants: {
+            '': {
+              type: 'application/x-directory',
+              spec: ''
+            }
+          }
         };
+      }
+    }
+
+    for (let record of response.Contents || []) {
+      const key = record.Key; // e.g., "bluefire/file.txt" or "bluefire/folder1/file.txt"
+
+      if (key.endsWith('/') && record.Size === 0) {
         continue;
       }
 
-      const keyBaseForMeta = key.substring(0, key.lastIndexOf('.'));
-      const customMeta = await this.getMeta(keyBaseForMeta);
+      const relativePath = key.substring(s3Prefix.length);
+      const parts = relativePath.split('/');
+      if (parts.length === 1 && parts[0] !== '') {
+        const keyBaseForMeta = key.substring(0, key.lastIndexOf('.'));
+        const customMeta = await this.getMeta(keyBaseForMeta);
 
-      if (!items[keyBaseForMeta]) {
-        items[keyBaseForMeta] = { _id: keyBaseForMeta, variants: {} };
-      }
-
-      Object.assign(items[keyBaseForMeta], {
-        size: record.Size,
-        lastModified: record.LastModified.toISOString(),
-        type: customMeta?.type || record.ContentType,
-        variants: {
-          '': {
-            type: customMeta?.type || record.ContentType || 'application/octet-stream',
-            spec: ''
-          }
-        },
-        ...customMeta
-      });
-
-      const m = key.match(/(.*\/[A-Za-z0-9_-]+)\.(.+)$/);
-      if (m) {
-        const [, baseFromMatch, qualifier] = m;
-        const [parsedType, parsedSpec] = qualifier.split('.').reverse();
-        if (qualifier !== record.Key.substring(record.Key.lastIndexOf('.') + 1)) {
-            items[keyBaseForMeta].variants[parsedSpec] = { type: parsedType, spec: parsedSpec };
+        if (!items[keyBaseForMeta]) {
+          items[keyBaseForMeta] = { _id: keyBaseForMeta, variants: {} };
         }
+
+        Object.assign(items[keyBaseForMeta], {
+          size: record.Size,
+          lastModified: record.LastModified.toISOString(),
+          type: customMeta?.type || record.ContentType,
+          variants: {
+            '': {
+              type: customMeta?.type || record.ContentType || 'application/octet-stream',
+              spec: ''
+            }
+           },
+            ...customMeta
+        });
+          const m = key.match(/(.*\/[A-Za-z0-9_.-]+)\.([^/.]+)$/);
+          if (m) {
+              const [, baseFromMatch, qualifier] = m;
+              if (baseFromMatch === keyBaseForMeta) {
+                  items[keyBaseForMeta].variants[qualifier] = {
+                      type: record.ContentType,
+                      spec: qualifier
+                  };
+              }
+          }
       }
     }
     return items;
