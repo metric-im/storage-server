@@ -132,6 +132,35 @@ export default function itemRoutes(storage, connector) {
         }
     });
 
+    router.get('/meta/*filePath', async (req, res) => {
+      const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
+      const acct = param.split('/')[0];
+  
+      if (!checkAcl(connector, acct, 'read')) {
+        return res.sendStatus(403);
+      }
+  
+      const keyBase = param.replace(/\.[^/.]+$/, '');
+  
+      try {
+        const fileMetadata = await storage.getMeta(keyBase);
+
+        if (fileMetadata) {
+          return res.json({
+            key: param,
+            name: fileMetadata.name || keyBase.split('/').pop(),
+            isDir: false,
+            meta: fileMetadata
+          });
+        } else {
+          return res.sendStatus(404);
+        }
+      } catch (error) {
+        console.error('Error fetching metadata from backend:', error);
+        return res.status(500).json({ error: 'Internal Server Error', message: error.message });
+      }
+    });
+
     router.get('/*filePath', async (req, res) => {
         const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
         const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
