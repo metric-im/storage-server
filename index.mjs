@@ -27,11 +27,16 @@ export default class StorageServer extends Componentry.Module {
 
     routes() {
         const router = express.Router();
-        router.use(express.json());
-        router.use(fileUpload({ limits: {fileSize: 50 * 1024 * 1024}}));
-        router.use('/storage/list', listRoutes(this.storage, this.connector));
-        router.use('/storage/item', itemRoutes(this.storage, this.connector));
-        // router.use(this.notFound.bind(this));
+        router.use(
+            '/storage/list',
+            express.json(),
+            listRoutes(this.storage, this.connector)
+        );
+
+        router.use(
+            '/storage/item',
+            itemRoutes(this.storage, this.connector)
+        );
         return router;
     }
 

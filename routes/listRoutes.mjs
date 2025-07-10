@@ -63,7 +63,11 @@ export default function listRoutes(storage, connector) {
         const rawPath = req.params.path ? 
             (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : 
             '';
-        const prefix = [acct, ...rawPath.split('/')].filter(Boolean).join('/');
+        
+        let prefix = [acct, ...rawPath.split('/')].filter(Boolean).join('/');
+        if (rawPath !== '' && !prefix.endsWith('/')) { 
+          prefix += '/';
+        }
         const ok = await storage.remove(prefix);
         return ok ? res.sendStatus(204) : res.sendStatus(404);
     };
