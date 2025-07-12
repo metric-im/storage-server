@@ -1,6 +1,6 @@
 {
   "name": "@metric-im/storage-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "File management for metric componentry",
   "main": "index.mjs",
@@ -11,7 +11,7 @@
     "type": "git",
     "url": "git+https://github.com/metric-im/storage-server.git"
   },
-  "author": "Michael Sprague",
+  "author": "Davis West",
   "license": "UNLICENCED",
   "bugs": {
     "url": "https://github.com/metric-im/storage-server/issues"
