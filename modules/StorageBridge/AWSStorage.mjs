@@ -3,15 +3,6 @@ import path from 'path';
 import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
 import { Md5 } from '@aws-sdk/md5-js';
-import MediaPresetsRaw from '../MediaPresets.mjs';
-
-const MediaPresets = Object.fromEntries(
-  Object.entries(MediaPresetsRaw).map(([key, { _id, options }]) => {
-    const [, coords] = options.split('=');
-    const [width, height, fit] = coords.split(',');
-    return [_id, { id: _id, width: +width, height: +height, fit }];
-  })
-);
 
 export default class AWSStorage extends StorageBridge {
   constructor(parent, options = {}) {
