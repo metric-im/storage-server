@@ -70,10 +70,20 @@ export default function itemRoutes(storage, connector) {
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
             const ext  = path.extname(fullKey).slice(1);
-            await storage.putMeta(keyBase, { _created: now, _createdBy: connector.profile.userId, _hash: hash, _ext: ext, type: upload.mimetype });
-            return res.status(201).json({ key: fullKey });
+            
+            const newFileMeta = { 
+                _created: now, 
+                _createdBy: connector.profile.userId, 
+                _hash: hash, 
+                _ext: ext, 
+                type: upload.mimetype,
+                size: upload.data.length
+            };
+            await storage.putMeta(keyBase, newFileMeta);
 
+            return res.status(201).json({ key: fullKey, meta: newFileMeta });
         } catch (e) {
+            console.error('File upload POST error:', e);
             return res.status(500).json({ error: 'Internal Server Error', message: e.message });
         }
     });
@@ -105,7 +115,16 @@ export default function itemRoutes(storage, connector) {
             
             const existingMeta = (await storage.getMeta(keyBase)) || {};
             const ext          = path.extname(fullKey).slice(1);
-            const newMeta = { ...existingMeta, _modified: now, _modifiedBy: connector.profile.userId, _hash: hash, _ext: ext, type: upload.mimetype };
+            
+            const newMeta = { 
+                ...existingMeta, 
+                _modified: now, 
+                _modifiedBy: connector.profile.userId, 
+                _hash: hash, 
+                _ext: ext, 
+                type: upload.mimetype,
+                size: upload.data.length
+            };
             await storage.putMeta(keyBase, newMeta); 
 
             await Promise.all(
@@ -121,13 +140,14 @@ export default function itemRoutes(storage, connector) {
                             'image/png'
                         );
                     } catch (presetError) {
-                        throw presetError; 
+                        console.error(`Error generating preset ${preset.id} for ${keyBase}:`, presetError);
                     }
                 })
             );
 
-            return res.json({ key: fullKey });
+            return res.json({ key: fullKey, meta: newMeta });
         } catch (e) {
+            console.error('File upload PUT error:', e);
             return res.status(500).json({ error: 'Internal Server Error', message: e.message });
         }
     });
@@ -178,6 +198,7 @@ export default function itemRoutes(storage, connector) {
                 }
                 return res.type('image/png').send(buffer);
             } catch (err) {
+                console.error(`Error serving preset ${urlExt} for ${keyBase}:`, err);
                 return res.sendStatus(500);
             }
         }
