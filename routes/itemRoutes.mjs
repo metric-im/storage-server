@@ -182,42 +182,53 @@ export default function itemRoutes(storage, connector) {
     });
 
     router.get('/*filePath', async (req, res) => {
-        const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
-        const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
-        if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
-
-        const urlExt = path.extname(param).slice(1);
-        const preset = MediaPresets[urlExt];
-
-        if (preset) {
-            const keyBase = param.slice(0, -(urlExt.length + 1));
-            try {
-                let buffer = await storage.getImage(keyBase, preset);
-                if (!buffer) {
-                    return res.sendStatus(500);
-                }
-                return res.type('image/png').send(buffer);
-            } catch (err) {
-                console.error(`Error serving preset ${urlExt} for ${keyBase}:`, err);
-                return res.sendStatus(500);
-            }
+      const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
+      const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
+      if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
+      const urlExt = path.extname(param).slice(1);
+      const preset = MediaPresets[urlExt];
+      if (preset) {
+        const keyBase = param.slice(0, -(urlExt.length + 1));
+        try {
+          let buffer = await storage.getImage(keyBase, preset);
+          if (!buffer) {
+            return res.sendStatus(500);
+          }
+          return res.type('image/png').send(buffer);
+        } catch (err) {
+          console.error(`Error serving preset ${urlExt} for ${keyBase}:`, err);
+          return res.sendStatus(500);
         }
-
-        const { path: parsedPath, engine } = parseRender(param);
-        if (engine !== 'raw') return res.sendStatus(501);
-
-        let fullKey = parsedPath;
-        if (!path.extname(parsedPath)) { 
-            const meta = await storage.getMeta(parsedPath); 
-            if (!meta?._ext) {
-                return res.sendStatus(404);
-            }
-            fullKey = `${parsedPath}.${meta._ext}`;
+      }
+      const { path: parsedPath, engine } = parseRender(param);
+      if (engine !== 'raw') return res.sendStatus(501);
+      let fullKey = parsedPath;
+      let fileMimeType = 'application/octet-stream';
+      let fileName = path.basename(parsedPath);
+      const meta = await storage.getMeta(parsedPath);
+      if (meta) {
+        if (meta._ext) {
+          fullKey = `${parsedPath}.${meta._ext}`;
         }
-        const data = await storage.get(fullKey);
-        return data
-            ? res.type('application/octet-stream').send(data)
-            : res.sendStatus(404);
+        if (meta.type) {
+          fileMimeType = meta.type;
+        }
+        if (meta.name) {
+          fileName = meta.name;
+        }
+      } else {
+        if (!path.extname(parsedPath)) {
+          return res.sendStatus(404);
+        }
+      }
+      const data = await storage.get(fullKey);
+      if (data) {
+        res.setHeader('Content-Type', fileMimeType);
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+        return res.send(data);
+      } else {
+        return res.sendStatus(404);
+      }
     });
 
     router.delete('/*filePath', async (req, res) => {
