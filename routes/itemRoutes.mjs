@@ -50,13 +50,12 @@ export default function itemRoutes(storage, connector) {
 
         const { fullKey, keyBase } = getKeyAndBase(param, upload.name);
 
-        const existingMeta = await storage.getMeta(keyBase);
-        if (existingMeta) {
-            return res.status(409).json({ error: 'File already exists', key: fullKey });
-        }
-
         try {
-            await storage.put(fullKey, upload.data, upload.mimetype);
+            const hasher = crypto.createHash('md5');
+            hasher.update(upload.data);
+            const contentMD5 = hasher.digest('base64');
+        
+            await storage.put(fullKey, upload.data, upload.mimetype, contentMD5);
 
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');

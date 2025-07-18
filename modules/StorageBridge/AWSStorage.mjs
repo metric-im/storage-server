@@ -2,7 +2,6 @@ import sharp from 'sharp';
 import path from 'path';
 import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
-import { Md5 } from '@aws-sdk/md5-js';
 import { TransformedMediaPresets as MediaPresets } from '../../lib/utils.mjs';
 
 export default class AWSStorage extends StorageBridge {
@@ -156,17 +155,14 @@ export default class AWSStorage extends StorageBridge {
     if (response.$metadata.httpStatusCode === 200) return await this.streamToBuffer(response.Body);
     else return null;
   }
-  async put(keyName,buffer,type) {
-    const hasher = new Md5();
-    hasher.update(buffer);
-    const contentMD5 = Buffer.from(await hasher.digest()).toString('base64');
+  async put(keyName,buffer,type,precalculatedContentMD5) {
     let response = await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: keyName,
       ContentType: type,
       Body: buffer,
-      ContentMD5: contentMD5
-    }))
+      ContentMD5: precalculatedContentMD5
+    }));
     if (response.$metadata.httpStatusCode === 200) return buffer;
     else return null;
   }
@@ -244,14 +240,12 @@ export default class AWSStorage extends StorageBridge {
     }))
   }
 
-  async putImage(id, file, fileType, buffer) {
-    // When the source image changes, delete prior variants, so they are reconstructed.
+  async putImage(id, file, fileType, buffer, precalculatedContentMD5) {
     let variants = await this.client.send(new ListObjectsCommand({
       Bucket: this.bucketName,
       Prefix: `${id}`,
     }));
     if (variants.Contents) {
-      // don't delete the properties file
       let files = variants.Contents.filter((file)=>!file.Key.endsWith('.json') && file.Key !== file);
       if (files.length > 0) {
         await this.client.send(new DeleteObjectsCommand({
@@ -260,17 +254,13 @@ export default class AWSStorage extends StorageBridge {
         }));
       }
     }
-    const hasher = new Md5();
-    hasher.update(buffer);
-    const contentMD5 = Buffer.from(await hasher.digest()).toString('base64');
-    // Post the new object
     let response = await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: file, // for image === spec.path
       ContentType: fileType,
       Body: buffer,
-      ContentMD5: contentMD5
-    }))
+      ContentMD5: precalculatedContentMD5
+    }));
     if (response.$metadata.httpStatusCode === 200) {
       return buffer;
     } else return null;
