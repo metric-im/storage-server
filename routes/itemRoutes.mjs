@@ -1,17 +1,8 @@
 import express from 'express';
 import path from 'path';
 import sharp from 'sharp';
-import MediaPresetsRaw from '../modules/MediaPresets.mjs';
-import { parseRender, getKeyAndBase, checkAcl } from '../lib/utils.mjs';
+import { parseRender, getKeyAndBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
 import crypto from 'crypto';
-
-const MediaPresets = Object.fromEntries(
-  Object.entries(MediaPresetsRaw).map(([key, { _id, options }]) => {
-    const [, coords] = options.split('=');
-    const [width, height, fit] = coords.split(',');
-    return [_id, { id: _id, width: +width, height: +height, fit }];
-  })
-);
 
 export default function itemRoutes(storage, connector) {
     const router = express.Router();
@@ -65,7 +56,7 @@ export default function itemRoutes(storage, connector) {
         }
 
         try {
-            await storage.putImage(keyBase, fullKey, upload.mimetype, upload.data);
+            await storage.put(fullKey, upload.data, upload.mimetype);
 
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
@@ -80,7 +71,6 @@ export default function itemRoutes(storage, connector) {
                 size: upload.data.length
             };
             await storage.putMeta(keyBase, newFileMeta);
-
             return res.status(201).json({ key: fullKey, meta: newFileMeta });
         } catch (e) {
             console.error('File upload POST error:', e);
@@ -125,26 +115,7 @@ export default function itemRoutes(storage, connector) {
                 type: upload.mimetype,
                 size: upload.data.length
             };
-            await storage.putMeta(keyBase, newMeta); 
-
-            await Promise.all(
-                Object.values(MediaPresets).map(async preset => {
-                    try {
-                        const thumbnailBuffer = await sharp(upload.data)
-                            .resize(preset.width, preset.height, { fit: preset.fit })
-                            .png()
-                            .toBuffer();
-                        await storage.put(
-                            `${keyBase}.${preset.id}`,
-                            thumbnailBuffer,
-                            'image/png'
-                        );
-                    } catch (presetError) {
-                        console.error(`Error generating preset ${preset.id} for ${keyBase}:`, presetError);
-                    }
-                })
-            );
-
+            await storage.putMeta(keyBase, newMeta);
             return res.json({ key: fullKey, meta: newMeta });
         } catch (e) {
             console.error('File upload PUT error:', e);
