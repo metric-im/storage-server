@@ -3,6 +3,7 @@ import path from 'path';
 import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
 import { Md5 } from '@aws-sdk/md5-js';
+import { TransformedMediaPresets as MediaPresets } from '../../lib/utils.mjs';
 
 export default class AWSStorage extends StorageBridge {
   constructor(parent, options = {}) {
@@ -29,78 +30,127 @@ export default class AWSStorage extends StorageBridge {
 
   async list(prefix) {
     const s3Prefix = prefix ? `${prefix}/` : '';
-    let listCommand = new ListObjectsCommand({
-      Bucket: this.bucketName,
-      Prefix: s3Prefix,
-      Delimiter: '/'
-    });
-
-    let response = await this.client.send(listCommand);
     let items = {};
+    const excludedExtensions = new Set();
 
-    for (let commonPrefix of response.CommonPrefixes || []) {
+    for (const presetId in MediaPresets) {
+      if (Object.prototype.hasOwnProperty.call(MediaPresets, presetId)) {
+        const preset = MediaPresets[presetId];
+        if (preset.id) {
+          excludedExtensions.add(`.${preset.id.toLowerCase()}`);
+          if (['tb', 'tw', 'icon', 'sez', 'gg', 'ob'].includes(preset.id.toLowerCase())) {
+            excludedExtensions.add(`.${preset.id.toLowerCase()}.png`);
+          }
+        }
+      }
+    }
+    excludedExtensions.add('._i');
+    excludedExtensions.add('.meta');
+
+    let dirResponse;
+    try {
+      let dirListCommand = new ListObjectsCommand({
+        Bucket: this.bucketName,
+        Prefix: s3Prefix,
+        Delimiter: '/'
+      });
+      dirResponse = await this.client.send(dirListCommand);
+    } catch (error) {
+      console.error('Error listing directories from S3:', error);
+      dirResponse = { CommonPrefixes: [] };
+    }
+
+    for (let commonPrefix of dirResponse.CommonPrefixes || []) {
       const key = commonPrefix.Prefix; // e.g., "bluefire/folder1/"
       const folderKeyBase = key.slice(0, -1); // e.g., "bluefire/folder1"
-
       const relativePath = folderKeyBase.substring(s3Prefix.length);
       const parts = relativePath.split('/');
-
       if (parts.length === 1 && parts[0] !== '') {
-        items[folderKeyBase] = {
+        const folderItem = {
           _id: folderKeyBase,
-          variants: {
-            '': {
-              type: 'application/x-directory',
-              spec: ''
-            }
-          }
+          key: folderKeyBase,
+          name: parts[0],
+          isDir: true,
+          size: 0,
+          lastModified: null,
+          type: 'application/x-directory',
+          meta: {
+            type: 'application/x-directory',
+          },
+          variants: {}
         };
+        items[folderKeyBase] = folderItem;
       }
     }
 
-    for (let record of response.Contents || []) {
-      const key = record.Key; // e.g., "bluefire/file.txt" or "bluefire/folder1/file.txt"
+    let fileResponse;
+    try {
+      let fileListCommand = new ListObjectsCommand({
+        Bucket: this.bucketName,
+        Prefix: s3Prefix,
+      });
+      fileResponse = await this.client.send(fileListCommand);
+    } catch (error) {
+      fileResponse = { Contents: [] };
+    }
+
+    for (let record of fileResponse.Contents || []) {
+      const key = record.Key;
 
       if (key.endsWith('/') && record.Size === 0) {
+        continue;
+      }
+      if (key === s3Prefix) {
+        continue;
+      }
+      if (typeof key !== 'string' || key.length === 0) {
+        continue;
+      }
+
+      const fileName = key.split('/').pop();
+      const fileNameLower = fileName.toLowerCase();
+      let shouldExclude = false;
+      for (const ext of excludedExtensions) {
+        if (fileNameLower.endsWith(ext)) {
+          shouldExclude = true;
+          break;
+        }
+      }
+      if (shouldExclude) {
         continue;
       }
 
       const relativePath = key.substring(s3Prefix.length);
       const parts = relativePath.split('/');
-      if (parts.length === 1 && parts[0] !== '') {
-        const keyBaseForMeta = key.substring(0, key.lastIndexOf('.'));
-        const customMeta = await this.getMeta(keyBaseForMeta);
-
-        if (!items[keyBaseForMeta]) {
-          items[keyBaseForMeta] = { _id: keyBaseForMeta, variants: {} };
-        }
-
-        Object.assign(items[keyBaseForMeta], {
+      if (parts.length === 1 && parts[0] !== '' && !relativePath.includes('/')) {
+        const fileItem = {
+          _id: key,
+          key: key,
+          name: parts[0],
+          isDir: false,
           size: record.Size,
           lastModified: record.LastModified.toISOString(),
-          type: customMeta?.type || record.ContentType,
+          type: record.ContentType || 'application/octet-stream',
+          meta: {
+            type: record.ContentType || 'application/octet-stream',
+            size: record.Size,
+            _lastModified: record.LastModified.toISOString()
+          },
           variants: {
             '': {
-              type: customMeta?.type || record.ContentType || 'application/octet-stream',
+              type: record.ContentType || 'application/octet-stream',
               spec: ''
             }
-           },
-            ...customMeta
-        });
-          const m = key.match(/(.*\/[A-Za-z0-9_.-]+)\.([^/.]+)$/);
-          if (m) {
-              const [, baseFromMatch, qualifier] = m;
-              if (baseFromMatch === keyBaseForMeta) {
-                  items[keyBaseForMeta].variants[qualifier] = {
-                      type: record.ContentType,
-                      spec: qualifier
-                  };
-              }
           }
+        };
+        items[key] = fileItem;
       }
     }
-    return items;
+
+    const listItems = Object.values(items);
+    return listItems;
   }
+
   async get(keyName) {
     let response = await this.sendS3Request(new GetObjectCommand({Bucket: this.bucketName, Key: keyName}));
     if (response.$metadata.httpStatusCode === 200) return await this.streamToBuffer(response.Body);
