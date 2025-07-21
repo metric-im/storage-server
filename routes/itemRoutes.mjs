@@ -1,17 +1,8 @@
 import express from 'express';
 import path from 'path';
 import sharp from 'sharp';
-import MediaPresetsRaw from '../modules/MediaPresets.mjs';
-import { parseRender, getKeyAndBase, checkAcl } from '../lib/utils.mjs';
+import { parseRender, getKeyAndBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
 import crypto from 'crypto';
-
-const MediaPresets = Object.fromEntries(
-  Object.entries(MediaPresetsRaw).map(([key, { _id, options }]) => {
-    const [, coords] = options.split('=');
-    const [width, height, fit] = coords.split(',');
-    return [_id, { id: _id, width: +width, height: +height, fit }];
-  })
-);
 
 export default function itemRoutes(storage, connector) {
     const router = express.Router();
@@ -59,21 +50,29 @@ export default function itemRoutes(storage, connector) {
 
         const { fullKey, keyBase } = getKeyAndBase(param, upload.name);
 
-        const existingMeta = await storage.getMeta(keyBase);
-        if (existingMeta) {
-            return res.status(409).json({ error: 'File already exists', key: fullKey });
-        }
-
         try {
-            await storage.putImage(keyBase, fullKey, upload.mimetype, upload.data);
+            const hasher = crypto.createHash('md5');
+            hasher.update(upload.data);
+            const contentMD5 = hasher.digest('base64');
+        
+            await storage.put(fullKey, upload.data, upload.mimetype, contentMD5);
 
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
             const ext  = path.extname(fullKey).slice(1);
-            await storage.putMeta(keyBase, { _created: now, _createdBy: connector.profile.userId, _hash: hash, _ext: ext, type: upload.mimetype });
-            return res.status(201).json({ key: fullKey });
-
+            
+            const newFileMeta = { 
+                _created: now, 
+                _createdBy: connector.profile.userId, 
+                _hash: hash, 
+                _ext: ext, 
+                type: upload.mimetype,
+                size: upload.data.length
+            };
+            await storage.putMeta(keyBase, newFileMeta);
+            return res.status(201).json({ key: fullKey, meta: newFileMeta });
         } catch (e) {
+            console.error('File upload POST error:', e);
             return res.status(500).json({ error: 'Internal Server Error', message: e.message });
         }
     });
@@ -105,29 +104,20 @@ export default function itemRoutes(storage, connector) {
             
             const existingMeta = (await storage.getMeta(keyBase)) || {};
             const ext          = path.extname(fullKey).slice(1);
-            const newMeta = { ...existingMeta, _modified: now, _modifiedBy: connector.profile.userId, _hash: hash, _ext: ext, type: upload.mimetype };
-            await storage.putMeta(keyBase, newMeta); 
-
-            await Promise.all(
-                Object.values(MediaPresets).map(async preset => {
-                    try {
-                        const thumbnailBuffer = await sharp(upload.data)
-                            .resize(preset.width, preset.height, { fit: preset.fit })
-                            .png()
-                            .toBuffer();
-                        await storage.put(
-                            `${keyBase}.${preset.id}`,
-                            thumbnailBuffer,
-                            'image/png'
-                        );
-                    } catch (presetError) {
-                        throw presetError; 
-                    }
-                })
-            );
-
-            return res.json({ key: fullKey });
+            
+            const newMeta = { 
+                ...existingMeta, 
+                _modified: now, 
+                _modifiedBy: connector.profile.userId, 
+                _hash: hash, 
+                _ext: ext, 
+                type: upload.mimetype,
+                size: upload.data.length
+            };
+            await storage.putMeta(keyBase, newMeta);
+            return res.json({ key: fullKey, meta: newMeta });
         } catch (e) {
+            console.error('File upload PUT error:', e);
             return res.status(500).json({ error: 'Internal Server Error', message: e.message });
         }
     });
@@ -162,41 +152,53 @@ export default function itemRoutes(storage, connector) {
     });
 
     router.get('/*filePath', async (req, res) => {
-        const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
-        const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
-        if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
-
-        const urlExt = path.extname(param).slice(1);
-        const preset = MediaPresets[urlExt];
-
-        if (preset) {
-            const keyBase = param.slice(0, -(urlExt.length + 1));
-            try {
-                let buffer = await storage.getImage(keyBase, preset);
-                if (!buffer) {
-                    return res.sendStatus(500);
-                }
-                return res.type('image/png').send(buffer);
-            } catch (err) {
-                return res.sendStatus(500);
-            }
+      const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
+      const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
+      if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
+      const urlExt = path.extname(param).slice(1);
+      const preset = MediaPresets[urlExt];
+      if (preset) {
+        const keyBase = param.slice(0, -(urlExt.length + 1));
+        try {
+          let buffer = await storage.getImage(keyBase, preset);
+          if (!buffer) {
+            return res.sendStatus(500);
+          }
+          return res.type('image/png').send(buffer);
+        } catch (err) {
+          console.error(`Error serving preset ${urlExt} for ${keyBase}:`, err);
+          return res.sendStatus(500);
         }
-
-        const { path: parsedPath, engine } = parseRender(param);
-        if (engine !== 'raw') return res.sendStatus(501);
-
-        let fullKey = parsedPath;
-        if (!path.extname(parsedPath)) { 
-            const meta = await storage.getMeta(parsedPath); 
-            if (!meta?._ext) {
-                return res.sendStatus(404);
-            }
-            fullKey = `${parsedPath}.${meta._ext}`;
+      }
+      const { path: parsedPath, engine } = parseRender(param);
+      if (engine !== 'raw') return res.sendStatus(501);
+      let fullKey = parsedPath;
+      let fileMimeType = 'application/octet-stream';
+      let fileName = path.basename(parsedPath);
+      const meta = await storage.getMeta(parsedPath);
+      if (meta) {
+        if (meta._ext) {
+          fullKey = `${parsedPath}.${meta._ext}`;
         }
-        const data = await storage.get(fullKey);
-        return data
-            ? res.type('application/octet-stream').send(data)
-            : res.sendStatus(404);
+        if (meta.type) {
+          fileMimeType = meta.type;
+        }
+        if (meta.name) {
+          fileName = meta.name;
+        }
+      } else {
+        if (!path.extname(parsedPath)) {
+          return res.sendStatus(404);
+        }
+      }
+      const data = await storage.get(fullKey);
+      if (data) {
+        res.setHeader('Content-Type', fileMimeType);
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+        return res.send(data);
+      } else {
+        return res.sendStatus(404);
+      }
     });
 
     router.delete('/*filePath', async (req, res) => {
