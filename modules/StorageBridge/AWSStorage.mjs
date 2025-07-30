@@ -37,126 +37,121 @@ export default class AWSStorage extends StorageBridge {
         const preset = MediaPresets[presetId];
         if (preset.id) {
           excludedExtensions.add(`.${preset.id.toLowerCase()}`);
-          if (['tb', 'tw', 'icon', 'sez', 'gg', 'ob'].includes(preset.id.toLowerCase())) {
-            excludedExtensions.add(`.${preset.id.toLowerCase()}.png`);
-          }
+          excludedExtensions.add(`.${preset.id.toLowerCase()}.png`);
         }
       }
     }
     excludedExtensions.add('._i');
     excludedExtensions.add('.meta');
 
-    let dirResponse;
     try {
-      let dirListCommand = new ListObjectsCommand({
+      const dirResponse = await this.client.send(new ListObjectsCommand({
         Bucket: this.bucketName,
         Prefix: s3Prefix,
         Delimiter: '/'
-      });
-      dirResponse = await this.client.send(dirListCommand);
-    } catch (error) {
-      console.error('Error listing directories from S3:', error);
-      dirResponse = { CommonPrefixes: [] };
-    }
+      }));
 
-    for (let commonPrefix of dirResponse.CommonPrefixes || []) {
-      const key = commonPrefix.Prefix; // e.g., "bluefire/folder1/"
-      const folderKeyBase = key.slice(0, -1); // e.g., "bluefire/folder1"
-      const relativePath = folderKeyBase.substring(s3Prefix.length);
-      const parts = relativePath.split('/');
-      if (parts.length === 1 && parts[0] !== '') {
-        const folderItem = {
-          _id: folderKeyBase,
-          key: folderKeyBase,
-          name: parts[0],
-          isDir: true,
-          size: 0,
-          lastModified: null,
-          type: 'application/x-directory',
-          meta: {
+      for (let commonPrefix of dirResponse.CommonPrefixes || []) {
+        const key = commonPrefix.Prefix;
+        const folderKeyBase = key.slice(0, -1);
+        const relativePath = folderKeyBase.substring(s3Prefix.length);
+        const parts = relativePath.split('/');
+        
+        if (parts.length === 1 && parts[0] !== '') {
+          items[folderKeyBase] = {
+            _id: folderKeyBase,
+            key: folderKeyBase,
+            name: parts[0],
+            isDir: true,
+            size: 0,
+            lastModified: null,
             type: 'application/x-directory',
-          },
-          variants: {}
-        };
-        items[folderKeyBase] = folderItem;
-      }
-    }
-
-    let fileResponse;
-    try {
-      let fileListCommand = new ListObjectsCommand({
-        Bucket: this.bucketName,
-        Prefix: s3Prefix,
-      });
-      fileResponse = await this.client.send(fileListCommand);
-    } catch (error) {
-      fileResponse = { Contents: [] };
-    }
-
-    for (let record of fileResponse.Contents || []) {
-      const key = record.Key;
-
-      if (key.endsWith('/') && record.Size === 0) {
-        continue;
-      }
-      if (key === s3Prefix) {
-        continue;
-      }
-      if (typeof key !== 'string' || key.length === 0) {
-        continue;
-      }
-
-      const fileName = key.split('/').pop();
-      const fileNameLower = fileName.toLowerCase();
-      let shouldExclude = false;
-      for (const ext of excludedExtensions) {
-        if (fileNameLower.endsWith(ext)) {
-          shouldExclude = true;
-          break;
+            meta: { type: 'application/x-directory' },
+            variants: {}
+          };
         }
       }
-      if (shouldExclude) {
-        continue;
-      }
-
-      const relativePath = key.substring(s3Prefix.length);
-      const parts = relativePath.split('/');
-      if (parts.length === 1 && parts[0] !== '' && !relativePath.includes('/')) {
-        const fileItem = {
-          _id: key,
-          key: key,
-          name: parts[0],
-          isDir: false,
-          size: record.Size,
-          lastModified: record.LastModified.toISOString(),
-          type: record.ContentType || 'application/octet-stream',
-          meta: {
-            type: record.ContentType || 'application/octet-stream',
-            size: record.Size,
-            _lastModified: record.LastModified.toISOString()
-          },
-          variants: {
-            '': {
-              type: record.ContentType || 'application/octet-stream',
-              spec: ''
-            }
-          }
-        };
-        items[key] = fileItem;
-      }
+    } catch (error) {
+      console.error('Error listing directories from S3:', error);
     }
 
-    const listItems = Object.values(items);
-    return listItems;
+    try {
+      const fileResponse = await this.client.send(new ListObjectsCommand({
+        Bucket: this.bucketName,
+        Prefix: s3Prefix
+      }));
+
+      for (let record of fileResponse.Contents || []) {
+        const key = record.Key;
+        if (key.endsWith('/') && record.Size === 0) continue;
+        if (key === s3Prefix) continue;
+        if (typeof key !== 'string' || key.length === 0) continue;
+
+        const fileName = key.split('/').pop();
+        const fileNameLower = fileName.toLowerCase();
+        let shouldExclude = false;
+        for (const ext of excludedExtensions) {
+          if (fileNameLower.endsWith(ext)) {
+            shouldExclude = true;
+            break;
+          }
+        }
+        if (shouldExclude) continue;
+
+        const relativePath = key.substring(s3Prefix.length);
+        const parts = relativePath.split('/');
+        
+        if (parts.length === 1 && parts[0] !== '' && !relativePath.includes('/')) {
+          items[key] = {
+            _id: key,
+            key: key,
+            name: parts[0],
+            isDir: false,
+            size: record.Size,
+            lastModified: record.LastModified.toISOString(),
+            type: record.ContentType || 'application/octet-stream',
+            meta: {
+              type: record.ContentType || 'application/octet-stream',
+              size: record.Size,
+              _lastModified: record.LastModified.toISOString()
+            },
+            variants: {
+              '': {
+                type: record.ContentType || 'application/octet-stream',
+                spec: ''
+              }
+            }
+          };
+        }
+      }
+    } catch (error) {
+      console.error('Error listing files from S3:', error);
+    }
+    return Object.values(items);
   }
 
   async get(keyName) {
-    let response = await this.sendS3Request(new GetObjectCommand({Bucket: this.bucketName, Key: keyName}));
-    if (response.$metadata.httpStatusCode === 200) return await this.streamToBuffer(response.Body);
-    else return null;
+    try {
+      const response = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: keyName
+      }));
+      
+      if (response.$metadata.httpStatusCode === 200) {
+        return await this.streamToBuffer(response.Body);
+      }
+      return null;
+    } catch (error) {
+      if (error.$metadata && error.$metadata.httpStatusCode === 404) {
+        return null;
+      }
+      console.error(`Error getting ${keyName}:`, error);
+      throw error;
+    }
   }
+
   async put(keyName,buffer,type,precalculatedContentMD5) {
-    let response = await this.client.send(new PutObjectCommand({
+    const response = await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: keyName,
       ContentType: type,
@@ -167,109 +162,194 @@ export default class AWSStorage extends StorageBridge {
     else return null;
   }
 
-  async getJSON(keyName) {
-    try {
-      const command = new GetObjectCommand({Bucket: this.bucketName, Key: keyName+'.json'})
-      const response = await this.sendS3Request(command);
-      if (response.$metadata.httpStatusCode === 200) {
-        const buffer = await this.streamToBuffer(response.Body)
-        return JSON.parse(buffer.toString());
-      }
-    } catch(e) {}
-    return {};
-  }
-  
-  async putMeta(keyName, data) {
+  async putMeta(keyBase, data) {
+    const metaKey = `${keyBase}._i`;
     const body = JSON.stringify(data);
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucketName,
-      Key: `${keyName}._i`,
+      Key: metaKey,
       ContentType: 'application/json',
       Body: body
     }));
   }
 
-  async getMeta(keyName) {
+  async getMeta(keyBase) {
+    const metaKey = `${keyBase}._i`;
     try {
-      let resp = await this.client.send(new GetObjectCommand({
+      const resp = await this.client.send(new GetObjectCommand({
         Bucket: this.bucketName,
-        Key: `${keyName}._i`
+        Key: metaKey
       }));
+      
       if (resp.$metadata.httpStatusCode === 200) {
         const buffer = await this.streamToBuffer(resp.Body);
         return JSON.parse(buffer.toString());
       }
-    } catch (e) {}
+    } catch (e) {
+      if (e.$metadata && e.$metadata.httpStatusCode === 404) {
+        return null;
+      }
+      console.error(`Error getting meta for ${keyBase}:`, e);
+      throw e;
+    }
     return null;
   }
 
-  async getImage(keyBase, preset) {
-    const variantKey = `${keyBase}.${preset.id}`;
-    // 1) Try cache
-    const cached = await this.get(variantKey);
-    if (cached) return cached;
+  async clearVariants(keyBase) {
+    const objectsToDelete = [];
 
-    // 2) Load original
-    let originalKey = keyBase;
-    if (!path.extname(originalKey)) {
-      const meta = await this.getMeta(keyBase) || {};
-      if (!meta._ext) return null;
-      originalKey = `${keyBase}.${meta._ext}`;
-    }
-    const originalBuffer = await this.get(originalKey);
-    if (!originalBuffer) return null;
-
-    // 3) Transform via Sharp
-    let image = sharp(originalBuffer, { failOnError: false })
-      .resize(preset.width, preset.height, { fit: preset.fit });
-    image = image.png();
-    const outputBuffer = await image.toBuffer();
-
-    // 4) Cache & return
-    await this.put(variantKey, outputBuffer, 'image/png');
-    return outputBuffer;
-  }
-
-  async putJSON(id, data) {
-    let json = (typeof data === 'object')?JSON.stringify(data):data;
-    await this.client.send(new PutObjectCommand({
-      Bucket: this.bucketName,
-      Key: id+'.json', // for image === spec.path
-      ContentType: 'application/json',
-      Body: json
-    }))
-  }
-
-  async putImage(id, file, fileType, buffer, precalculatedContentMD5) {
-    let variants = await this.client.send(new ListObjectsCommand({
-      Bucket: this.bucketName,
-      Prefix: `${id}`,
-    }));
-    if (variants.Contents) {
-      let files = variants.Contents.filter((file)=>!file.Key.endsWith('.json') && file.Key !== file);
-      if (files.length > 0) {
-        await this.client.send(new DeleteObjectsCommand({
-          Bucket: this.bucketName,
-          Delete: {Objects: files.map(f => ({ Key: f.Key }))}
-        }));
+    for (const presetId in MediaPresets) {
+      if (Object.prototype.hasOwnProperty.call(MediaPresets, presetId)) {
+        const commonOutputFormats = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+        for (const ext of commonOutputFormats) {
+          objectsToDelete.push({ Key: `${keyBase}.${presetId}.${ext}` });
+        }
       }
     }
-    let response = await this.client.send(new PutObjectCommand({
-      Bucket: this.bucketName,
-      Key: file, // for image === spec.path
-      ContentType: fileType,
-      Body: buffer,
-      ContentMD5: precalculatedContentMD5
-    }));
-    if (response.$metadata.httpStatusCode === 200) {
-      return buffer;
-    } else return null;
+
+    if (objectsToDelete.length > 0) {
+      try {
+        await this.client.send(new DeleteObjectsCommand({
+          Bucket: this.bucketName,
+          Delete: { Objects: objectsToDelete }
+        }));
+        return objectsToDelete.length;
+      } catch (error) {
+        console.error(`Error clearing variants for ${keyBase}:`, error);
+        return 0;
+      }
+    }
+    return 0;
   }
 
-  async sendS3Request(option) {
+  async putImage(keyBase, fullKey, mimetype, buffer, precalculatedContentMD5) {
+    await this.put(fullKey, buffer, mimetype, precalculatedContentMD5);
+    await this.clearVariants(keyBase);
+  }
+
+  async getImage(keyBase, preset, originalMimeType = null, originalFileKey = null) {
+    if (!preset || !preset.id || typeof preset.id !== 'string') {
+      console.error('Invalid preset object received:', preset);
+      return null;
+    }
+    const variantKey = `${keyBase}.${preset.id}.png`;
     try {
-      return await this.client.send(option);
-    } catch (e) {return  e}
+      const cachedVariant = await this.get(variantKey);
+      if (cachedVariant) return cachedVariant;
+    } catch (error) {}
+    let originalImageBuffer = null;
+    let effectiveOriginalFileKey = originalFileKey;
+    if (!effectiveOriginalFileKey) {
+      try {
+        const meta = await this.getMeta(keyBase);
+        if (meta && meta.originalFileKey) {
+          effectiveOriginalFileKey = meta.originalFileKey;
+        } else if (meta && meta._ext) {
+          effectiveOriginalFileKey = `${keyBase}.${meta._ext}`;
+        }
+      } catch (metaError) {
+        console.warn(`Error fetching meta for keyBase ${keyBase}:`, metaError.message);
+      }
+    }
+    if (effectiveOriginalFileKey) {
+      try {
+        originalImageBuffer = await this.get(effectiveOriginalFileKey);
+      } catch (e) {
+        console.error(`Error retrieving original image ${effectiveOriginalFileKey}:`, e.message);
+      }
+    }
+    if (!originalImageBuffer) {
+      const commonExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'jfif'];
+      for (const ext of commonExtensions) {
+        const potentialKey = `${keyBase}.${ext}`;
+        try {
+          originalImageBuffer = await this.get(potentialKey);
+          if (originalImageBuffer) {
+            effectiveOriginalFileKey = potentialKey;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+    if (!originalImageBuffer) {
+      console.error(`Original image not found for keyBase: ${keyBase}`);
+      return null;
+    }
+    try {
+      const sharpInstance = sharp(originalImageBuffer, { failOnError: false })
+        .resize(preset.width, preset.height, { fit: preset.fit })
+        .png();
+
+      const generatedBuffer = await sharpInstance.toBuffer();
+      await this.put(variantKey, generatedBuffer, 'image/png');
+      return generatedBuffer;
+    } catch (sharpErr) {
+      console.error(`Error during Sharp transformation for ${keyBase} with preset ${preset.id}:`, sharpErr);
+      return null;
+    }
+  }
+
+  async remove(ids, pathPrefix) {
+    if (!ids) return false;
+    if (typeof ids === 'string') ids = [ids];
+    let overallSuccess = false;
+    for (const keyBase of ids) {
+      const fullKeyBase = pathPrefix ? `${pathPrefix}/${keyBase}` : keyBase;
+      const objectsToDelete = [];
+      objectsToDelete.push({ Key: `${fullKeyBase}._i` });
+      try {
+        const meta = await this.getMeta(fullKeyBase);
+        if (meta && meta.originalFileKey) {
+          objectsToDelete.push({ Key: meta.originalFileKey });
+        } else {
+          const possibleExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'jfif'];
+          for (const ext of possibleExtensions) {
+            const potentialKey = `${fullKeyBase}.${ext}`;
+            try {
+              await this.client.send(new GetObjectCommand({
+                Bucket: this.bucketName,
+                Key: potentialKey
+              }));
+              objectsToDelete.push({ Key: potentialKey });
+            } catch (e) {
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`Error fetching meta for ${fullKeyBase} during remove:`, e);
+      }
+
+      const presetIds = Object.keys(MediaPresets);
+      const commonOutputFormats = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+
+      for (const presetId of presetIds) {
+        for (const ext of commonOutputFormats) {
+          objectsToDelete.push({ Key: `${fullKeyBase}.${presetId}.${ext}` });
+        }
+      }
+
+      if (objectsToDelete.length > 0) {
+        try {
+          const deletePromises = objectsToDelete.map(obj => 
+            this.client.send(new DeleteObjectCommand({
+              Bucket: this.bucketName,
+              Key: obj.Key
+            })).catch(err => {
+              if (err.$metadata?.httpStatusCode !== 404) {
+                console.warn(`Error deleting ${obj.Key}:`, err.message);
+              }
+            })
+          );
+          
+          await Promise.allSettled(deletePromises);
+          overallSuccess = true;
+        } catch (error) {
+          console.error(`Error deleting objects for ${fullKeyBase}:`, error);
+        }
+      }
+    }
+
+    return overallSuccess;
   }
 
   streamToBuffer(stream) {
@@ -279,51 +359,5 @@ export default class AWSStorage extends StorageBridge {
       stream.on('end', () => resolve(Buffer.concat(chunks)));
       stream.on('error', reject);
     });
-  }
-
-  async rotate(id, rotateDegree) {
-    let image = await this.get(id)
-    if (!image) return false
-
-    image = await this.streamToBuffer(image)
-    const buffer = await sharp(image).rotate(rotateDegree).toBuffer()
-
-    const fileType = 'image/png';
-
-    const isDeleted = await this.remove(id)
-    if (!isDeleted) return false
-
-    const url = await this.putImage(id, `${id}.png`, fileType, buffer)
-
-    return Boolean(url)
-  }
-
-  async remove(ids, pathPrefix) {
-    if (!ids) return false;
-    if (typeof ids === 'string') ids = ids.split(',');
-
-    let foundAny = false;
-
-    for (let id of ids) {
-      const prefix = pathPrefix ? `${pathPrefix}/${id}` : id;
-
-      // list everything under prefix including "folder/" marker
-      const listCommand = new ListObjectsCommand({
-        Bucket: this.bucketName,
-        Prefix: prefix,
-      });
-      const response = await this.client.send(listCommand);
-
-      // delete each object individually
-      for (let obj of response.Contents || []) {
-        await this.client.send(new DeleteObjectCommand({
-          Bucket: this.bucketName,
-          Key: obj.Key
-        }));
-        foundAny = true;
-      }
-    }
-
-    return foundAny;
   }
 }
