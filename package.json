@@ -1,6 +1,6 @@
 {
   "name": "@metric-im/storage-server",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "File management for metric componentry",
   "main": "index.mjs",
