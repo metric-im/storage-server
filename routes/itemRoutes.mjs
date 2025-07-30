@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import sharp from 'sharp';
 import { parseRender, getKeyAndBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
 import crypto from 'crypto';
 
@@ -12,6 +11,25 @@ export default function itemRoutes(storage, connector) {
         type: '*/*',
         limit: '50mb'
     });
+
+    const MimeTypes = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'pdf': 'application/pdf',
+        'mp4': 'video/mp4',
+        'webm': 'video/webm',
+        'mov': 'video/quicktime',
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'txt': 'text/plain',
+        'html': 'text/html',
+        'json': 'application/json',
+        'xml': 'application/xml',
+        'jfif': 'image/jpeg',
+        'svg': 'image/svg+xml'
+    };
 
     router.put('/*filePath', jsonParser, async (req,res, next) => {
         if (!req.is('application/json')) return next();
@@ -67,7 +85,8 @@ export default function itemRoutes(storage, connector) {
                 _hash: hash, 
                 _ext: ext, 
                 type: upload.mimetype,
-                size: upload.data.length
+                size: upload.data.length,
+                originalFileKey: fullKey
             };
             await storage.putMeta(keyBase, newFileMeta);
             return res.status(201).json({ key: fullKey, meta: newFileMeta });
@@ -97,11 +116,13 @@ export default function itemRoutes(storage, connector) {
         const { fullKey, keyBase } = getKeyAndBase(param, upload.name);
 
         try {
-            await storage.putImage(keyBase, fullKey, upload.mimetype, upload.data);
+            const hasher = crypto.createHash('md5');
+            hasher.update(upload.data);
+            const contentMD5 = hasher.digest('base64');
+            await storage.putImage(keyBase, fullKey, upload.mimetype, upload.data, contentMD5); 
             
             const now = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
-            
             const existingMeta = (await storage.getMeta(keyBase)) || {};
             const ext          = path.extname(fullKey).slice(1);
             
@@ -112,7 +133,8 @@ export default function itemRoutes(storage, connector) {
                 _hash: hash, 
                 _ext: ext, 
                 type: upload.mimetype,
-                size: upload.data.length
+                size: upload.data.length,
+                originalFileKey: fullKey
             };
             await storage.putMeta(keyBase, newMeta);
             return res.json({ key: fullKey, meta: newMeta });
@@ -155,19 +177,37 @@ export default function itemRoutes(storage, connector) {
       const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
       const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
       if (!checkAcl(connector, acct, 'read')) return res.sendStatus(403);
-      const urlExt = path.extname(param).slice(1);
-      const preset = MediaPresets[urlExt];
-      if (preset) {
-        const keyBase = param.slice(0, -(urlExt.length + 1));
+      const parts = param.split('.');
+      const lastPart = parts[parts.length - 1];
+      let presetId = null;
+      let keyBase = null;
+      
+      if (parts.length >= 3) {
+        const secondToLastPart = parts[parts.length - 2];
+        if (MediaPresets[secondToLastPart]) {
+          presetId = secondToLastPart;
+          keyBase = parts.slice(0, -2).join('.');
+        }
+      }
+      if (!presetId && MediaPresets[lastPart]) {
+        presetId = lastPart;
+        keyBase = parts.slice(0, -1).join('.');
+      }
+      
+      if (presetId && keyBase) {
+        const preset = MediaPresets[presetId];
         try {
-          let buffer = await storage.getImage(keyBase, preset);
+          const meta = await storage.getMeta(keyBase);
+          const originalMimeType = meta ? meta.type : null;
+          const originalFileKey = meta ? meta.originalFileKey : null;
+          const buffer = await storage.getImage(keyBase, preset, originalMimeType, originalFileKey);
           if (!buffer) {
             return res.sendStatus(500);
           }
           return res.type('image/png').send(buffer);
         } catch (err) {
-          console.error(`Error serving preset ${urlExt} for ${keyBase}:`, err);
-          return res.sendStatus(500);
+          console.error(`Error serving preset ${presetId} for ${keyBase}:`, err);
+          return res.status(500).json({ error: 'Internal Server Error', message: err.message });
         }
       }
       const { path: parsedPath, engine } = parseRender(param);
@@ -175,21 +215,34 @@ export default function itemRoutes(storage, connector) {
       let fullKey = parsedPath;
       let fileMimeType = 'application/octet-stream';
       let fileName = path.basename(parsedPath);
-      const meta = await storage.getMeta(parsedPath);
-      if (meta) {
-        if (meta._ext) {
-          fullKey = `${parsedPath}.${meta._ext}`;
+      const metaLookupKey = path.extname(parsedPath) ? 
+        parsedPath.replace(/\.[^/.]+$/, '') : 
+        parsedPath;
+      try {
+        const meta = await storage.getMeta(metaLookupKey);
+        if (meta) {
+          if (meta.originalFileKey) {
+            fullKey = meta.originalFileKey;
+          } else if (meta._ext) {
+            fullKey = `${metaLookupKey}.${meta._ext}`;
+          }
+          if (meta.type) {
+            fileMimeType = meta.type;
+          } else if (MimeTypes[path.extname(fullKey).slice(1)]) {
+            fileMimeType = MimeTypes[path.extname(fullKey).slice(1)];
+          }
+          if (meta.name) {
+            fileName = meta.name;
+          }
+        } else {
+          if (!path.extname(parsedPath)) {
+            return res.sendStatus(404);
+          } else {
+            fileMimeType = MimeTypes[path.extname(parsedPath).slice(1)] || 'application/octet-stream';
+          }
         }
-        if (meta.type) {
-          fileMimeType = meta.type;
-        }
-        if (meta.name) {
-          fileName = meta.name;
-        }
-      } else {
-        if (!path.extname(parsedPath)) {
-          return res.sendStatus(404);
-        }
+      } catch (e) {
+        console.warn(`Error fetching metadata for ${metaLookupKey}:`, e.message);
       }
       const data = await storage.get(fullKey);
       if (data) {
