@@ -197,15 +197,23 @@ export default function itemRoutes(storage, connector) {
       if (presetId && keyBase) {
         const preset = MediaPresets[presetId];
         try {
-          const meta = await storage.getMeta(keyBase);
+          let meta = null;
+          try {
+            meta = await storage.getMeta(keyBase);
+          } catch (metaError) {
+            console.warn(`Metadata not found for ${keyBase}, proceeding without meta:`, metaError.message);
+          }
           const originalMimeType = meta ? meta.type : null;
           const originalFileKey = meta ? meta.originalFileKey : null;
           const buffer = await storage.getImage(keyBase, preset, originalMimeType, originalFileKey);
           if (!buffer) {
-            return res.sendStatus(500);
+            return res.sendStatus(404);
           }
           return res.type('image/png').send(buffer);
         } catch (err) {
+          if (err.message && err.message.includes('not found')) {
+            return res.sendStatus(404);
+          }
           console.error(`Error serving preset ${presetId} for ${keyBase}:`, err);
           return res.status(500).json({ error: 'Internal Server Error', message: err.message });
         }
@@ -218,39 +226,49 @@ export default function itemRoutes(storage, connector) {
       const metaLookupKey = path.extname(parsedPath) ? 
         parsedPath.replace(/\.[^/.]+$/, '') : 
         parsedPath;
+      let meta = null;
       try {
-        const meta = await storage.getMeta(metaLookupKey);
-        if (meta) {
-          if (meta.originalFileKey) {
-            fullKey = meta.originalFileKey;
-          } else if (meta._ext) {
-            fullKey = `${metaLookupKey}.${meta._ext}`;
-          }
-          if (meta.type) {
-            fileMimeType = meta.type;
-          } else if (MimeTypes[path.extname(fullKey).slice(1)]) {
-            fileMimeType = MimeTypes[path.extname(fullKey).slice(1)];
-          }
-          if (meta.name) {
-            fileName = meta.name;
-          }
-        } else {
-          if (!path.extname(parsedPath)) {
-            return res.sendStatus(404);
-          } else {
-            fileMimeType = MimeTypes[path.extname(parsedPath).slice(1)] || 'application/octet-stream';
-          }
-        }
+        meta = await storage.getMeta(metaLookupKey);
       } catch (e) {
-        console.warn(`Error fetching metadata for ${metaLookupKey}:`, e.message);
+        console.warn(`Metadata not available for ${metaLookupKey}:`, e.message);
       }
-      const data = await storage.get(fullKey);
-      if (data) {
-        res.setHeader('Content-Type', fileMimeType);
-        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
-        return res.send(data);
+
+      if (meta) {
+        if (meta.originalFileKey) {
+          fullKey = meta.originalFileKey;
+        } else if (meta._ext) {
+          fullKey = `${metaLookupKey}.${meta._ext}`;
+        }
+        if (meta.type) {
+          fileMimeType = meta.type;
+        } else if (MimeTypes[path.extname(fullKey).slice(1)]) {
+          fileMimeType = MimeTypes[path.extname(fullKey).slice(1)];
+        }
+        if (meta.name) {
+          fileName = meta.name;
+        }
       } else {
-        return res.sendStatus(404);
+        if (!path.extname(parsedPath)) {
+          return res.sendStatus(404);
+        } else {
+          fileMimeType = MimeTypes[path.extname(parsedPath).slice(1)] || 'application/octet-stream';
+        }
+      }
+      try {
+        const data = await storage.get(fullKey);
+        if (data) {
+          res.setHeader('Content-Type', fileMimeType);
+          res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+          return res.send(data);
+        } else {
+          return res.sendStatus(404);
+        }
+      } catch (storageError) {
+        if (storageError.message && storageError.message.includes('not found')) {
+          return res.sendStatus(404);
+        }
+        console.error(`Error retrieving file ${fullKey}:`, storageError);
+        return res.status(500).json({ error: 'Internal Server Error', message: storageError.message });
       }
     });
 
