@@ -196,30 +196,50 @@ export default class AWSStorage extends StorageBridge {
   }
 
   async clearVariants(keyBase) {
-    const objectsToDelete = [];
-
+    const variantsToDelete = [];
     for (const presetId in MediaPresets) {
       if (Object.prototype.hasOwnProperty.call(MediaPresets, presetId)) {
         const commonOutputFormats = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
         for (const ext of commonOutputFormats) {
-          objectsToDelete.push({ Key: `${keyBase}.${presetId}.${ext}` });
+          const variantKey = `${keyBase}.${presetId}.${ext}`;
+          variantsToDelete.push(variantKey);
         }
       }
     }
 
-    if (objectsToDelete.length > 0) {
+    const deletePromises = variantsToDelete.map(async (variantKey) => {
       try {
-        await this.client.send(new DeleteObjectsCommand({
+        await this.client.send(new DeleteObjectCommand({
           Bucket: this.bucketName,
-          Delete: { Objects: objectsToDelete }
+          Key: variantKey
         }));
-        return objectsToDelete.length;
+        return { key: variantKey, status: 'deleted' };
       } catch (error) {
-        console.error(`Error clearing variants for ${keyBase}:`, error);
-        return 0;
+        if (error.$metadata?.httpStatusCode === 404) {
+          return { key: variantKey, status: 'not_found' };
+        } else {
+          return { key: variantKey, status: 'error', error: error.message };
+        }
       }
-    }
-    return 0;
+    });
+
+    const results = await Promise.allSettled(deletePromises);
+    let deletedCount = 0;
+    let errorCount = 0;
+    let notFoundCount = 0;
+    
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        const { status } = result.value;
+        if (status === 'deleted') deletedCount++;
+        else if (status === 'not_found') notFoundCount++;
+        else if (status === 'error') errorCount++;
+      } else {
+        console.error(`[clearVariants] Promise failed for variant ${variantsToDelete[index]}:`, result.reason);
+        errorCount++;
+      }
+    });
+    return { deletedCount, errorCount, notFoundCount };
   }
 
   async putImage(keyBase, fullKey, mimetype, buffer, precalculatedContentMD5) {
@@ -277,7 +297,10 @@ export default class AWSStorage extends StorageBridge {
     }
     try {
       const sharpInstance = sharp(originalImageBuffer, { failOnError: false })
-        .resize(preset.width, preset.height, { fit: preset.fit })
+        .resize(preset.width, preset.height, { 
+          fit: preset.fit,
+          background: { r: 255, g: 255, b: 255, alpha: 1 }
+        })
         .png();
 
       const generatedBuffer = await sharpInstance.toBuffer();
