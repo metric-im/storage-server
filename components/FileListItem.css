@@ -1,0 +1,92 @@
+. {
+  display: flex;
+  align-items: center;
+  padding: var(--spacerquarter) var(--spacerhalf);
+  border-bottom: 1px solid var(--bg-color-emphasis);
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  min-height: 40px;
+  color: var(--text-color);
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.file-item:hover,
+.file-item:focus-visible {
+  background: var(--bg-color-properties);
+  border-color: var(--action-color-hilite);
+  outline: none;
+}
+
+.file-item.optimistic {
+  opacity: 0.6;
+  font-style: italic;
+  background-color: var(--status-info-faded);
+  border: 1px dashed var(--status-info);
+}
+
+.file-item-main-content {
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.icon {
+  font-family: 'Entypo', sans-serif;
+  margin-right: var(--spacerquarter);
+  flex-shrink: 0;
+}
+
+.file-name-text {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size-text {
+  flex-shrink: 0;
+  margin-left: var(--spacerhalf);
+  color: #888;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--spacerhalf);
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.delete-icon {
+  color: var(--status-error);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--font-size-sm);
+  padding: var(--spacerquarter);
+  border-radius: var(--border-radius-sm);
+  transition: opacity 0.2s ease;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.delete-icon:hover,
+.delete-icon:focus-visible {
+  opacity: 1;
+  text-decoration: none;
+  background-color: transparent;
+  transform: none;
+  outline: none;
+}
+
+.item-placeholder-text {
+  color: var(--text-color);
+}

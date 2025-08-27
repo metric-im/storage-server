@@ -1,0 +1,15 @@
+. {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--spacerhalf);
+  padding: var(--spacerhalf);
+  background: var(--bg-color-properties);
+  border-bottom: 1px solid var(--bg-color-emphasis);
+  align-items: center;
+  flex-wrap: wrap;
+  box-shadow: none;
+}
+
+.file-toolbar input[type="file"] {
+  display: none;
+}

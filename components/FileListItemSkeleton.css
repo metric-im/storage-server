@@ -1,0 +1,10 @@
+. {
+  display: flex;
+  align-items: center;
+  padding: var(--spacerquarter) var(--spacerhalf);
+  border-bottom: 1px solid var(--bg-color-emphasis);
+  min-height: 40px;
+  background-color: var(--bg-color);
+  overflow: hidden;
+  position: relative;
+}
