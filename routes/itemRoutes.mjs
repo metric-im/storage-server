@@ -3,7 +3,7 @@ import path from 'path';
 import { parseRender, getKeyAndBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
 import crypto from 'crypto';
 
-export default function itemRoutes(storage, connector) {
+export default function itemRoutes(storage, connector, epistery) {
     const router = express.Router();
 
     const jsonParser = express.json();
@@ -78,18 +78,65 @@ export default function itemRoutes(storage, connector) {
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
             const ext  = path.extname(fullKey).slice(1);
-            
+
+            let blockchainProof = null;
+            if (epistery && req.account?.address) {
+                try {
+                    const uploaderWallet = {
+                        address: req.account.address,
+                        mnemonic: req.user?.wallet?.mnemonic || '',
+                        publicKey: req.user?.wallet?.publicKey || '',
+                        privateKey: req.user?.wallet?.privateKey || ''
+                    };
+
+                    const fileData = {
+                        fileName: upload.name,
+                        fileKey: fullKey,
+                        account: acct,
+                        mimeType: upload.mimetype,
+                        size: upload.data.length,
+                        hash: contentMD5,
+                        uploadedAt: now,
+                        uploadedBy: req.account.address
+                    };
+
+                    blockchainProof = await epistery.write(uploaderWallet, fileData);
+                    console.log(`Data wallet minted: ${blockchainProof.ipfsHash}`);
+                } catch (episteryError) {
+                    console.error('Failed to mint data wallet:', episteryError);
+                }
+            }
+
             const newFileMeta = { 
                 _created: now, 
-                _createdBy: connector.profile.userId, 
+                _createdBy: req.account?.userId || connector.profile.userId,
                 _hash: hash, 
                 _ext: ext, 
                 type: upload.mimetype,
                 size: upload.data.length,
-                originalFileKey: fullKey
+                originalFileKey: fullKey,
+                ...(blockchainProof && {
+                    dataWallet: {
+                        ipfsHash: blockchainProof.ipfsHash,
+                        ipfsUrl: blockchainProof.ipfsUrl,
+                        signature: blockchainProof.signature,
+                        aquaTree: blockchainProof.aquaTree
+                    }
+                })
             };
+
             await storage.putMeta(keyBase, newFileMeta);
-            return res.status(201).json({ key: fullKey, meta: newFileMeta });
+
+            return res.status(201).json({ 
+                key: fullKey, 
+                meta: newFileMeta,
+                dataWallet: blockchainProof ? {
+                    ipfsHash: blockchainProof.ipfsHash,
+                    ipfsUrl: blockchainProof.ipfsUrl,
+                    verified: true
+                } : null
+            });
+
         } catch (e) {
             console.error('File upload POST error:', e);
             return res.status(500).json({ error: 'Internal Server Error', message: e.message });

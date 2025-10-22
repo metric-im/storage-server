@@ -11,16 +11,25 @@ import dotenv from 'dotenv';
 import StorageBridge from './modules/StorageBridge/index.mjs';
 import listRoutes  from './routes/listRoutes.mjs';
 import itemRoutes  from './routes/itemRoutes.mjs';
+import { Epistery } from 'epistery';
 
 dotenv.config();
 
 export default class StorageServer extends Componentry.Module {
     constructor(connector) {
         super(connector,import.meta.url)
+        this.epistery = null;
     }
 
     static async mint(connector) {
         const server = new StorageServer(connector);
+        try {
+            await Epistery.initialize();
+            server.epistery = Epistery;
+            console.log("Epistery initialized for storage server");
+        } catch (e) {
+            console.warn("Error initializing Epistery:", error);
+        }
         server.storage = await StorageBridge.mint(server);
         return server;
     }
