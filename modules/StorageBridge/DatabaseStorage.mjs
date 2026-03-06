@@ -29,6 +29,14 @@ export default class DatabaseStorage extends Index {
       {$set: {status: 'live', type: fileType, file: file, data: data,variants:[]}}
     );
   }
+  async rename(oldKeyBase, newKeyBase) {
+    const oldDoc = await this.parent.collection.findOne({ _id: oldKeyBase });
+    if (!oldDoc) throw new Error(`Document not found: ${oldKeyBase}`);
+    const newDoc = { ...oldDoc, _id: newKeyBase };
+    await this.parent.collection.insertOne(newDoc);
+    await this.parent.collection.deleteOne({ _id: oldKeyBase });
+    return { fullKey: newKeyBase };
+  }
   async rotate(id) {
     let item = await this.getItem(id);
     if (!item) return null;

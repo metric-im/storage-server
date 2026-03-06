@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import path from 'path';
 import StorageBridge from './index.mjs';
-import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
+import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand,CopyObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { TransformedMediaPresets as MediaPresets } from '../../lib/utils.mjs';
 
 export default class AWSStorage extends StorageBridge {
@@ -310,6 +310,65 @@ export default class AWSStorage extends StorageBridge {
       console.error(`Error during Sharp transformation for ${keyBase} with preset ${preset.id}:`, sharpErr);
       return null;
     }
+  }
+
+  async rename(oldKeyBase, newKeyBase) {
+    const meta = await this.getMeta(oldKeyBase);
+
+    let oldOriginalFileKey;
+    if (meta && meta.originalFileKey) {
+      oldOriginalFileKey = meta.originalFileKey;
+    } else if (meta && meta._ext) {
+      oldOriginalFileKey = `${oldKeyBase}.${meta._ext}`;
+    } else {
+      const possibleExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'jfif', 'pdf', 'mp4', 'mp3', 'txt'];
+      for (const ext of possibleExtensions) {
+        try {
+          await this.client.send(new GetObjectCommand({
+            Bucket: this.bucketName,
+            Key: `${oldKeyBase}.${ext}`
+          }));
+          oldOriginalFileKey = `${oldKeyBase}.${ext}`;
+          break;
+        } catch (e) {}
+      }
+    }
+
+    if (!oldOriginalFileKey) {
+      throw new Error(`Cannot find original file for ${oldKeyBase}`);
+    }
+
+    const ext = path.extname(oldOriginalFileKey);
+    const newOriginalFileKey = `${newKeyBase}${ext}`;
+
+    await this.client.send(new CopyObjectCommand({
+      Bucket: this.bucketName,
+      CopySource: `${this.bucketName}/${oldOriginalFileKey}`,
+      Key: newOriginalFileKey
+    }));
+
+    const now = new Date().toISOString();
+    const newMeta = { ...(meta || {}), originalFileKey: newOriginalFileKey, _modified: now };
+    await this.putMeta(newKeyBase, newMeta);
+
+    await this.clearVariants(oldKeyBase);
+
+    await Promise.all([
+      this.client.send(new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: oldOriginalFileKey
+      })).catch(err => {
+        console.warn(`Failed to delete old file ${oldOriginalFileKey} during rename:`, err.message);
+      }),
+      this.client.send(new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: `${oldKeyBase}._i`
+      })).catch(err => {
+        console.warn(`Failed to delete old metadata ${oldKeyBase}._i during rename:`, err.message);
+      })
+    ]);
+
+    return { fullKey: newOriginalFileKey };
   }
 
   async remove(ids, pathPrefix) {

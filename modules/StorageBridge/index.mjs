@@ -46,6 +46,9 @@ export default class StorageBridge {
     async getProps(id,props) {
 
     }
+    async rename(oldKeyBase, newKeyBase) {
+
+    }
     async remove(id) {
         await this.parent.collection.deleteOne({_id:id});
     }
