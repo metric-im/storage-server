@@ -1,5 +1,8 @@
 import sharp from 'sharp';
 import path from 'path';
+import { spawn } from 'child_process';
+import fs from 'fs/promises';
+import os from 'os';
 import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand,CopyObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { TransformedMediaPresets as MediaPresets } from '../../lib/utils.mjs';
@@ -297,8 +300,8 @@ export default class AWSStorage extends StorageBridge {
     }
     try {
       const sharpInstance = sharp(originalImageBuffer, { failOnError: false })
-        .resize(preset.width, preset.height, { 
-          fit: preset.fit,
+        .resize(preset.width, preset.height, {
+          fit: 'inside',
           background: { r: 255, g: 255, b: 255, alpha: 1 }
         })
         .png();
@@ -309,6 +312,95 @@ export default class AWSStorage extends StorageBridge {
     } catch (sharpErr) {
       console.error(`Error during Sharp transformation for ${keyBase} with preset ${preset.id}:`, sharpErr);
       return null;
+    }
+  }
+
+  async getVideoThumbnail(keyBase, preset, originalMimeType = null, originalFileKey = null) {
+    if (!preset || !preset.id || typeof preset.id !== 'string') {
+      console.error('Invalid preset object received:', preset);
+      return null;
+    }
+    const variantKey = `${keyBase}.${preset.id}.png`;
+    try {
+      const cachedVariant = await this.get(variantKey);
+      if (cachedVariant) return cachedVariant;
+    } catch (error) {}
+
+    let effectiveOriginalFileKey = originalFileKey;
+    if (!effectiveOriginalFileKey) {
+      try {
+        const meta = await this.getMeta(keyBase);
+        if (meta && meta.originalFileKey) {
+          effectiveOriginalFileKey = meta.originalFileKey;
+        } else if (meta && meta._ext) {
+          effectiveOriginalFileKey = `${keyBase}.${meta._ext}`;
+        }
+      } catch (metaError) {
+        console.warn(`Error fetching meta for keyBase ${keyBase}:`, metaError.message);
+      }
+    }
+
+    let videoBuffer = null;
+    if (effectiveOriginalFileKey) {
+      try {
+        videoBuffer = await this.get(effectiveOriginalFileKey);
+      } catch (e) {
+        console.error(`Error retrieving original video ${effectiveOriginalFileKey}:`, e.message);
+      }
+    }
+    if (!videoBuffer) {
+      const videoExtensions = ['mp4', 'webm', 'mov', 'gif'];
+      for (const ext of videoExtensions) {
+        const potentialKey = `${keyBase}.${ext}`;
+        try {
+          videoBuffer = await this.get(potentialKey);
+          if (videoBuffer) break;
+        } catch (e) {}
+      }
+    }
+    if (!videoBuffer) {
+      console.error(`Original video not found for keyBase: ${keyBase}`);
+      return null;
+    }
+
+    const tmpInput = path.join(os.tmpdir(), `storage_vid_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    try {
+      await fs.writeFile(tmpInput, videoBuffer);
+
+      const frameBuffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        const ffmpeg = spawn('ffmpeg', [
+          '-ss', '1',
+          '-i', tmpInput,
+          '-frames:v', '1',
+          '-f', 'image2pipe',
+          '-vcodec', 'png',
+          'pipe:1'
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+        ffmpeg.on('close', code => {
+          if (code === 0 && chunks.length > 0) resolve(Buffer.concat(chunks));
+          else reject(new Error(`ffmpeg exited with code ${code}`));
+        });
+        ffmpeg.on('error', reject);
+      });
+
+      const generatedBuffer = await sharp(frameBuffer, { failOnError: false })
+        .resize(preset.width, preset.height, {
+          fit: 'inside',
+          background: { r: 255, g: 255, b: 255, alpha: 1 }
+        })
+        .png()
+        .toBuffer();
+
+      await this.put(variantKey, generatedBuffer, 'image/png');
+      return generatedBuffer;
+    } catch (err) {
+      console.error(`Error generating video thumbnail for ${keyBase} with preset ${preset.id}:`, err);
+      return null;
+    } finally {
+      await fs.unlink(tmpInput).catch(() => {});
     }
   }
 

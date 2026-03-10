@@ -5,5 +5,6 @@ export default {
     TB:  { _id:'TB',   name:'Taboola',   options:'scale=400,300,cover' },
     TW:  { _id:'TW',   name:'X/Twitter', options:'scale=400,400,cover' },
     SEZ: { _id:'SEZ',  name:'Sez.us',    options:'scale=400,400,cover' },
-    icon:{ _id:'icon', name:'Icon',      options:'scale=60,60,cover' }
+    icon:{ _id:'icon', name:'Icon',      options:'scale=60,60,cover' },
+    thumb:{ _id:'thumb', name:'Thumbnail', options:'scale=1200,628,cover' }
 };

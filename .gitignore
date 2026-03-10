@@ -7,3 +7,4 @@ test_modules
 package-lock\.json
 .npmrc
 .env
+CLAUDE.md
