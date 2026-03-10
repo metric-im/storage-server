@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
+import ffmpegPath from 'ffmpeg-static';
 import StorageBridge from './index.mjs';
 import { ListObjectsCommand,PutObjectCommand,GetObjectCommand,DeleteObjectCommand,DeleteObjectsCommand,CopyObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { TransformedMediaPresets as MediaPresets } from '../../lib/utils.mjs';
@@ -369,7 +370,7 @@ export default class AWSStorage extends StorageBridge {
 
       const frameBuffer = await new Promise((resolve, reject) => {
         const chunks = [];
-        const ffmpeg = spawn('ffmpeg', [
+        const ffmpeg = spawn(ffmpegPath, [
           '-ss', '1',
           '-i', tmpInput,
           '-frames:v', '1',
