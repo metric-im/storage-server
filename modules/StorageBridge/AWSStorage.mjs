@@ -388,10 +388,6 @@ export default class AWSStorage extends StorageBridge {
       });
 
       const generatedBuffer = await sharp(frameBuffer, { failOnError: false })
-        .resize(preset.width, preset.height, {
-          fit: 'inside',
-          background: { r: 255, g: 255, b: 255, alpha: 1 }
-        })
         .png()
         .toBuffer();
 
