@@ -242,7 +242,11 @@ export default function itemRoutes(storage, connector) {
           }
           const originalMimeType = meta ? meta.type : null;
           const originalFileKey = meta ? meta.originalFileKey : null;
-          const buffer = await storage.getImage(keyBase, preset, originalMimeType, originalFileKey);
+          const videoMimeTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'image/gif'];
+          const isVideo = originalMimeType && videoMimeTypes.includes(originalMimeType);
+          const buffer = isVideo
+            ? await storage.getVideoThumbnail(keyBase, preset, originalMimeType, originalFileKey)
+            : await storage.getImage(keyBase, preset, originalMimeType, originalFileKey);
           if (!buffer) {
             return res.sendStatus(404);
           }

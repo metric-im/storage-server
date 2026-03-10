@@ -40,6 +40,9 @@ export default class StorageBridge {
     async putImage(id, image) {
 
     }
+    async getVideoThumbnail(keyBase, preset, originalMimeType, originalFileKey) {
+
+    }
     async putProps(id,props) {
 
     }
