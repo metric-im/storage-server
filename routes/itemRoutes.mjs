@@ -31,6 +31,43 @@ export default function itemRoutes(storage, connector) {
         'svg': 'image/svg+xml'
     };
 
+    router.patch('/*filePath', jsonParser, async (req, res) => {
+        const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
+        const acct = Array.isArray(req.params.filePath) ? req.params.filePath[0] : req.params.filePath.split('/')[0];
+        if (!checkAcl(connector, acct, 'write')) return res.sendStatus(403);
+
+        const { newName } = req.body;
+        if (!newName || typeof newName !== 'string' || !newName.trim()) {
+            return res.status(400).json({ error: 'newName is required' });
+        }
+
+        if (/[/\\]/.test(newName) || newName === '.' || newName === '..' || newName.includes('..')) {
+            return res.status(400).json({ error: 'Invalid file name' });
+        }
+
+        const oldKeyBase = param.replace(/\.[^/.]+$/, '');
+        const dir = param.substring(0, param.lastIndexOf('/'));
+        const newPath = dir ? `${dir}/${newName}` : newName;
+        const newKeyBase = newPath.replace(/\.[^/.]+$/, '');
+
+        if (oldKeyBase === newKeyBase) {
+            return res.status(400).json({ error: 'New name is the same as the current name' });
+        }
+
+        try {
+            const existingMeta = await storage.getMeta(newKeyBase);
+            if (existingMeta) {
+                return res.status(409).json({ error: 'A file with that name already exists' });
+            }
+
+            const result = await storage.rename(oldKeyBase, newKeyBase);
+            return res.json({ key: result.fullKey, name: newName });
+        } catch (e) {
+            console.error('Rename error:', e);
+            return res.status(500).json({ error: 'Rename failed', message: e.message });
+        }
+    });
+
     router.put('/*filePath', jsonParser, async (req,res, next) => {
         if (!req.is('application/json')) return next();
         const param = Array.isArray(req.params.filePath) ? req.params.filePath.join('/') : req.params.filePath;
