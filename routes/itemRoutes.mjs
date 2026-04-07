@@ -9,7 +9,7 @@ export default function itemRoutes(storage, connector) {
     const jsonParser = express.json();
     const rawUpload = express.raw({
         type: '*/*',
-        limit: '50mb'
+        limit: '500mb'
     });
 
     const MimeTypes = {
