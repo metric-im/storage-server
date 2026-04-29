@@ -1,6 +1,6 @@
 import express from 'express';
 import path from 'path';
-import { parseRender, getKeyAndBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
+import { parseRender, getKeyAndBase, resolveUniqueKeyBase, checkAcl, TransformedMediaPresets as MediaPresets } from '../lib/utils.mjs';
 import crypto from 'crypto';
 
 export default function itemRoutes(storage, connector) {
@@ -103,24 +103,37 @@ export default function itemRoutes(storage, connector) {
             return res.status(400).json({ error: 'Missing X-File-Name header' });
         }
 
-        const { fullKey, keyBase } = getKeyAndBase(param, upload.name);
+        let { fullKey, keyBase } = getKeyAndBase(param, upload.name);
+
+        // Default to renaming on conflict so POST never silently overwrites an
+        // existing object. Callers that want overwrite semantics can opt in via
+        // ?onConflict=overwrite, or use PUT (which is the explicit replace verb).
+        const onConflict = (req.query.onConflict || 'rename').toLowerCase();
+        if (onConflict !== 'overwrite' && onConflict !== 'rename') {
+            return res.status(400).json({ error: 'onConflict must be "rename" or "overwrite"' });
+        }
 
         try {
+            if (onConflict === 'rename') {
+                ({ fullKey, keyBase } = await resolveUniqueKeyBase(storage, keyBase, fullKey));
+            }
+
             const hasher = crypto.createHash('md5');
             hasher.update(upload.data);
             const contentMD5 = hasher.digest('base64');
-        
             await storage.put(fullKey, upload.data, upload.mimetype, contentMD5);
 
             const now  = new Date().toISOString();
             const hash = crypto.createHash('md5').update(upload.data).digest('hex');
             const ext  = path.extname(fullKey).slice(1);
-            
-            const newFileMeta = { 
-                _created: now, 
-                _createdBy: connector.profile.userId, 
-                _hash: hash, 
-                _ext: ext, 
+            const name = path.basename(fullKey);
+
+            const newFileMeta = {
+                _created: now,
+                _createdBy: connector.profile.userId,
+                _hash: hash,
+                _ext: ext,
+                name,
                 type: upload.mimetype,
                 size: upload.data.length,
                 originalFileKey: fullKey
